@@ -4,11 +4,12 @@ set -euo pipefail
 SERVICE_NAME=signin
 SERVICE_USER=${SERVICE_USER:-root}
 SERVICE_GROUP=${SERVICE_GROUP:-root}
-INSTALL_DIR=/usr/local/signin-reader
 
-# Check if running as root
-if [[ $EUID -ne 0 ]]; then
-  echo "This script must be run as root (use: sudo bash install_service.sh)" >&2
+INSTALL_DIR=/usr/local/signin-scanner
+
+if [[ ! -f "$ENVFILE" ]]; then
+  echo "Missing $ENVFILE; please create it before installing." >&2
+
   exit 1
 fi
 
@@ -18,7 +19,9 @@ if [[ ! -d "$INSTALL_DIR" ]]; then
   exit 1
 fi
 
-echo "Setting up systemd service for signin-reader..."
+
+echo "Setting up systemd service for signin-scanner..."
+
 echo "  Installation directory: $INSTALL_DIR"
 echo "  Service user: $SERVICE_USER"
 echo "  Service group: $SERVICE_GROUP"
