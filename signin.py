@@ -483,18 +483,16 @@ def feedback(result: Tuple[int, Any], method: str = "unknown") -> None:
     if status == 204:
         # Debounced - no feedback needed
         return
-    elif status in (200, 201):
-        # Success - determine if sign-in or sign-out
-        if status == 201 or (isinstance(payload, str) and "successfully_signed_out" not in payload):
-            # Sign-in (201 created)
-            print(f"[{method}] Success: Signed In")
-            if _HAS_HARDWARE_FEEDBACK:
-                provide_feedback(FeedbackState.SIGNED_IN, message)
-        else:
-            # Sign-out (200 with sign-out message)
-            print(f"[{method}] Success: Signed Out")
-            if _HAS_HARDWARE_FEEDBACK:
-                provide_feedback(FeedbackState.SIGNED_OUT, message)
+    elif status == 201:
+        # Success - sign-in (201 Created)
+        print(f"[{method}] Success: Signed In")
+        if _HAS_HARDWARE_FEEDBACK:
+            provide_feedback(FeedbackState.SIGNED_IN, message)
+    elif status == 200:
+        # Success - sign-out (200 OK)
+        print(f"[{method}] Success: Signed Out")
+        if _HAS_HARDWARE_FEEDBACK:
+            provide_feedback(FeedbackState.SIGNED_OUT, message)
     elif status == 404:
         # Card not found
         print(f"[{method}] Error {status}: Card not registered")
