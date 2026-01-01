@@ -258,15 +258,15 @@ def shutdown_hardware() -> None:
     if _rgb_led is not None:
         try:
             _rgb_led.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            LOG.warning("Failed to close RGB LED: %s", exc)
         _rgb_led = None
     
     if _piezo is not None:
         try:
             _piezo.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            LOG.warning("Failed to close piezo buzzer: %s", exc)
         _piezo = None
     
     _oled = None
