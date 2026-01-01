@@ -4,29 +4,33 @@ set -euo pipefail
 SERVICE_NAME=signin
 SERVICE_USER=${SERVICE_USER:-root}
 SERVICE_GROUP=${SERVICE_GROUP:-root}
+
 INSTALL_DIR=/usr/local/signin-scanner
 
 if [[ ! -f "$ENVFILE" ]]; then
   echo "Missing $ENVFILE; please create it before installing." >&2
+
   exit 1
 fi
 
-# Create venv and install deps
-if [[ ! -x "$PYTHON_BIN" ]]; then
-  /usr/bin/python3 -m venv "$WORKDIR/.venv"
+# Check if installation directory exists
+if [[ ! -d "$INSTALL_DIR" ]]; then
+  echo "Error: $INSTALL_DIR does not exist" >&2
+  exit 1
 fi
-"$PIP_BIN" install --upgrade pip
-"$PIP_BIN" install -r "$WORKDIR/requirements.txt"
+
 
 echo "Setting up systemd service for signin-scanner..."
+
 echo "  Installation directory: $INSTALL_DIR"
 echo "  Service user: $SERVICE_USER"
 echo "  Service group: $SERVICE_GROUP"
 
-# Write systemd unit
-sudo tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null <<EOF
+# Write systemd unit file
+echo "Creating systemd service..."
+tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null <<EOF
 [Unit]
-Description=Salesforce Sign-in Service
+Description=Salesforce Sign-in Reader Service
 After=network-online.target
 Wants=network-online.target
 
@@ -35,16 +39,31 @@ Type=simple
 User=$SERVICE_USER
 Group=$SERVICE_GROUP
 EnvironmentFile=/etc/default/$SERVICE_NAME
-WorkingDirectory=$WORKDIR
-ExecStart=/bin/bash -lc '. "$WORKDIR/.venv/bin/activate" && python "$WORKDIR/signin.py" --rfid'
+WorkingDirectory=$INSTALL_DIR
+ExecStart=$INSTALL_DIR/.venv/bin/python $INSTALL_DIR/signin.py --rfid
 Restart=on-failure
 RestartSec=5
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-sudo systemctl daemon-reload
-sudo systemctl enable --now $SERVICE_NAME
+# Enable and start the service
+echo "Enabling service for boot..."
+systemctl daemon-reload
+systemctl enable $SERVICE_NAME
 
-echo "Service installed and started as $SERVICE_NAME (user=$SERVICE_USER)."
+echo ""
+echo "✓ Service configured successfully!"
+echo ""
+echo "Service commands:"
+echo "  sudo systemctl start $SERVICE_NAME      # Start the service now"
+echo "  sudo systemctl stop $SERVICE_NAME       # Stop the service"
+echo "  sudo systemctl restart $SERVICE_NAME    # Restart the service"
+echo "  sudo systemctl status $SERVICE_NAME     # View service status"
+echo "  sudo journalctl -u $SERVICE_NAME -f     # View live logs"
+echo ""
+echo "The service will automatically start on next boot."
+echo ""
