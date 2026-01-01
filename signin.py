@@ -63,9 +63,12 @@ RFID_DEBOUNCE_SECONDS = float(os.getenv("RFID_DEBOUNCE_SECONDS", "1.0"))
 SYSTEM_UNAVAILABLE_KEYWORDS = [
     "salesforce_not_connected",
     "salesforce_error",
-    "network",
-    "import",
-    "module",
+    "network error",
+    "network_unavailable",
+    "importerror",
+    "import error",
+    "module_not_found",
+    "module error",
 ]
 
 # Salesforce connection singleton
