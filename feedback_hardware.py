@@ -18,6 +18,9 @@ LOG.addHandler(logging.NullHandler())
 _HAS_GPIO = False
 _HAS_OLED = False
 
+# Hardware initialization flag
+_hardware_initialized = False
+
 # Hardware instances
 _rgb_led: Optional[Any] = None
 _piezo: Optional[Any] = None
@@ -68,8 +71,14 @@ OLED_HEIGHT = 128
 
 
 def _initialize_hardware() -> None:
-    """Initialize hardware components if available."""
-    global _rgb_led, _piezo, _oled, _draw, _font, _image
+    """Initialize hardware components if available (only runs once)."""
+    global _rgb_led, _piezo, _oled, _draw, _font, _image, _hardware_initialized
+    
+    # Skip if already initialized
+    if _hardware_initialized:
+        return
+    
+    _hardware_initialized = True
     
     # Initialize RGB LED
     if _HAS_GPIO and _rgb_led is None:
@@ -78,6 +87,7 @@ def _initialize_hardware() -> None:
             LOG.info("RGB LED initialized on pins R=%d, G=%d, B=%d", RGB_LED_RED_PIN, RGB_LED_GREEN_PIN, RGB_LED_BLUE_PIN)
         except Exception as exc:
             LOG.warning("Failed to initialize RGB LED: %s", exc)
+            _rgb_led = None
             _rgb_led = None
     
     # Initialize piezo buzzer
@@ -179,6 +189,9 @@ def provide_feedback(state: FeedbackState, message: str = "") -> None:
     Args:
         state: The feedback state to display
         message: Optional additional message text
+    
+    Note: The LED color persists until the next feedback state is shown.
+    For persistent states (ready to scan), call this to update the LED.
     """
     _initialize_hardware()
     
@@ -219,6 +232,12 @@ def provide_feedback(state: FeedbackState, message: str = "") -> None:
     
     elif state == FeedbackState.READY_TO_SCAN:
         # Cyan LED (waiting state), no beep, display ready message
+        # Turn off LED first to clear any previous state
+        if _rgb_led is not None:
+            try:
+                _rgb_led.off()
+            except Exception as exc:
+                LOG.warning("Failed to turn off LED: %s", exc)
         _set_rgb_color(0, 1, 1)  # Cyan
         _display_text(["Ready", "", "Please scan", "your card"])
         LOG.info("Feedback: Ready to Scan")

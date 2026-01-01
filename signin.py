@@ -29,7 +29,7 @@ except Exception:
 
 # Import hardware feedback module
 try:
-    from feedback_hardware import FeedbackState, provide_feedback, clear_feedback, shutdown_hardware
+    from feedback_hardware import FeedbackState, provide_feedback, shutdown_hardware
     _HAS_HARDWARE_FEEDBACK = True
 except ImportError:
     _HAS_HARDWARE_FEEDBACK = False
@@ -465,7 +465,7 @@ def feedback(result: Tuple[int, Any], method: str = "unknown") -> None:
     
     Maps status codes to appropriate feedback states:
     - 200/201: Success (signed in or signed out)
-    - 404 with "card_not_exists": Card not registered
+    - 404: Card not registered
     - 500 with network/import errors: System unavailable
     - 500 with other errors: Scan/processing error
     - 204: Debounced (no feedback)
