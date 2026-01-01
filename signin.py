@@ -30,6 +30,7 @@ except Exception:
 # Import hardware feedback module
 try:
     from feedback_hardware import FeedbackState, provide_feedback, shutdown_hardware
+
     _HAS_HARDWARE_FEEDBACK = True
 except ImportError:
     _HAS_HARDWARE_FEEDBACK = False
@@ -482,13 +483,13 @@ def rfid_entry() -> Tuple[int, Any]:
         provide_feedback(FeedbackState.PROCESSING_SCAN)
 
     result = process_signin_from_card_serial(serial)
-    feedback(result, method="rfid")
+    feedback(result, method="rfid", card_serial=serial)
     return result
 
 
-def feedback(result: Tuple[int, Any], method: str = "unknown") -> None:
+def feedback(result: Tuple[int, Any], method: str = "unknown", card_serial: str = "") -> None:
     """Provide feedback for a signin/signout result using hardware and console.
-    
+
     Maps status codes to appropriate feedback states:
     - 200/201: Success (signed in or signed out)
     - 404: Card not registered
@@ -526,10 +527,10 @@ def feedback(result: Tuple[int, Any], method: str = "unknown") -> None:
         if _HAS_HARDWARE_FEEDBACK:
             provide_feedback(FeedbackState.SIGNED_OUT, message)
     elif status == 404:
-        # Card not found
+        # Card not found - pass the card serial instead of the error message
         print(f"[{method}] Error {status}: Card not registered")
         if _HAS_HARDWARE_FEEDBACK:
-            provide_feedback(FeedbackState.CARD_NOT_EXIST, message)
+            provide_feedback(FeedbackState.CARD_NOT_EXIST, card_serial if card_serial else message)
     elif status == 500:
         # Server error - differentiate between system unavailable and scan error
         payload_str = str(payload).lower()
@@ -580,6 +581,9 @@ if __name__ == "__main__":
                     waiting_logged = True
                 status, _ = rfid_entry()
                 if status in (200, 201):
+                    # Wait 6 seconds before showing ready screen again
+                    # This allows the success message to display fully
+                    time.sleep(6.0)
                     waiting_logged = False
                 # Add small delay to prevent excessive polling
                 time.sleep(0.1)
@@ -589,6 +593,7 @@ if __name__ == "__main__":
                         provide_feedback(FeedbackState.READY_TO_SCAN)
                     waiting_logged = True
                 terminal_entry()
+                time.sleep(6.0)  # Wait before showing ready screen again
                 waiting_logged = False
     except KeyboardInterrupt:
         LOG.info("\nStopped by user.")
