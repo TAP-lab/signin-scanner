@@ -77,15 +77,16 @@ The system provides visual (LED), audio (buzzer), and display (OLED) feedback fo
 |-------|-----------|-------|-----------------|
 | **Ready to Scan** | Cyan | None | "Please scan your card" |
 | **Processing Scan** | Yellow | Quick beep | "Processing..." |
-| **Signed In** | Green | Rising beep | "✓ Signed In - Welcome!" |
-| **Signed Out** | Blue | Falling beep | "✓ Signed Out - Goodbye!" |
-| **Card Not Found** | Red | Triple low beep | "✗ Card Unknown" |
-| **Scan/Processing Error** | Red | Low error tone | "✗ Scan Error" |
-| **System Unavailable** | Red | Double warning beep | "✗ System Unavailable" |
+| **Signed In** | Green (3s) | Rising beep | "✓ Signed In - Welcome!" |
+| **Signed Out** | Blue (3s) | Falling beep | "✓ Signed Out - Goodbye!" |
+| **Card Not Found** | Red (3s) | Triple low beep | "✗ Card Unknown" |
+| **Scan/Processing Error** | Red (3s) | Low error tone | "✗ Scan Error" |
+| **System Unavailable** | Red (3s) | Double warning beep | "✗ System Unavailable" |
+| **Debounced** | Yellow (0.1s) | None | (No display) |
 
 > **Note:** Display messages shown above are simplified for readability. On the actual OLED, messages are rendered across multiple lines. For example, **Signed In** displays as `"✓ Signed In"` on line 1, a blank line, then `"Welcome!"` on line 3.
 
-The feedback system gracefully degrades when hardware is not available (e.g., on non-Pi systems or during development). The LED color persists until the next feedback state is shown - when returning to "Ready to Scan", the LED is cleared first to provide a clean transition.
+The feedback system gracefully degrades when hardware is not available (e.g., on non-Pi systems or during development). For result states (signed in/out, errors), the LED automatically turns off after 3 seconds to avoid confusion. The debounced state provides a brief 0.1s yellow blink to acknowledge card detection without disrupting the user flow.
 
 ## Notes
 - Uses OS local timezone (with DST) for workshop matching

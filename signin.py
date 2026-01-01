@@ -476,12 +476,18 @@ def feedback(result: Tuple[int, Any], method: str = "unknown") -> None:
         print(f"[{method}] invalid result: {result}")
         return
 
-    # Determine the message to display
-    message = str(payload) if not isinstance(payload, dict) else str(payload.get("id", ""))
+    # Determine the message to display - use generic messages instead of IDs
+    if isinstance(payload, dict):
+        # For dict payloads, don't show the record ID - use empty message
+        message = ""
+    else:
+        message = str(payload)
 
     # Map status codes to feedback states
     if status == 204:
-        # Debounced - no feedback needed
+        # Debounced - provide subtle feedback to acknowledge card was detected
+        if _HAS_HARDWARE_FEEDBACK:
+            provide_feedback(FeedbackState.DEBOUNCED)
         return
     elif status == 201:
         # Success - sign-in (201 Created)

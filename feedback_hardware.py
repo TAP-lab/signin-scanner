@@ -7,6 +7,7 @@ All hardware interfaces gracefully degrade when hardware is not available.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from enum import Enum
 from typing import Any, List, Optional, Tuple
@@ -20,6 +21,9 @@ _HAS_OLED = False
 
 # Hardware initialization flag
 _hardware_initialized = False
+
+# LED auto-clear timer
+_led_clear_timer: Optional[threading.Timer] = None
 
 # Hardware instances
 _rgb_led: Optional[Any] = None
@@ -57,6 +61,7 @@ class FeedbackState(Enum):
     SYSTEM_UNAVAILABLE = "system_unavailable"
     READY_TO_SCAN = "ready_to_scan"
     PROCESSING_SCAN = "processing_scan"
+    DEBOUNCED = "debounced"
 
 
 # Default GPIO pins (BCM numbering)
@@ -182,6 +187,33 @@ def _display_text(lines: List[str], clear: bool = True) -> None:
         LOG.warning("Failed to display text on OLED: %s", exc)
 
 
+def _schedule_led_clear(delay_seconds: float = 3.0) -> None:
+    """Schedule LED to turn off after a delay using a background timer.
+    
+    Args:
+        delay_seconds: Seconds to wait before turning off LED (default 3.0)
+    """
+    global _led_clear_timer
+    
+    # Cancel any existing timer
+    if _led_clear_timer is not None:
+        _led_clear_timer.cancel()
+    
+    # Define the clear function
+    def _clear_led():
+        if _rgb_led is not None:
+            try:
+                _rgb_led.off()
+                LOG.debug("LED auto-cleared after timeout")
+            except Exception as exc:
+                LOG.warning("Failed to auto-clear LED: %s", exc)
+    
+    # Schedule new timer
+    _led_clear_timer = threading.Timer(delay_seconds, _clear_led)
+    _led_clear_timer.daemon = True
+    _led_clear_timer.start()
+
+
 def provide_feedback(state: FeedbackState, message: str = "") -> None:
     """Provide hardware feedback for a given state.
     
@@ -189,10 +221,17 @@ def provide_feedback(state: FeedbackState, message: str = "") -> None:
         state: The feedback state to display
         message: Optional additional message text
     
-    Note: The LED color persists until the next feedback state is shown.
-    For persistent states (ready to scan), call this to update the LED.
+    Note: For result states (signed in/out, errors), the LED automatically 
+    turns off after 3 seconds. For persistent states (ready, processing), 
+    the LED stays on until the next feedback is shown.
     """
     _initialize_hardware()
+    
+    # Cancel any pending LED clear timer when showing new feedback
+    global _led_clear_timer
+    if _led_clear_timer is not None:
+        _led_clear_timer.cancel()
+        _led_clear_timer = None
     
     if state == FeedbackState.SIGNED_IN:
         # Green LED, success beep, display "Signed In"
@@ -200,6 +239,7 @@ def provide_feedback(state: FeedbackState, message: str = "") -> None:
         _play_beep_pattern([(800, 0.1), (1000, 0.2)])  # Rising beep
         _display_text(["✓ Signed In", "", message or "Welcome!"])
         LOG.info("Feedback: Signed In")
+        _schedule_led_clear(3.0)  # Auto-clear LED after 3 seconds
     
     elif state == FeedbackState.SIGNED_OUT:
         # Blue LED, double beep, display "Signed Out"
@@ -207,6 +247,7 @@ def provide_feedback(state: FeedbackState, message: str = "") -> None:
         _play_beep_pattern([(1000, 0.1), (800, 0.2)])  # Falling beep
         _display_text(["✓ Signed Out", "", message or "Goodbye!"])
         LOG.info("Feedback: Signed Out")
+        _schedule_led_clear(3.0)  # Auto-clear LED after 3 seconds
     
     elif state == FeedbackState.CARD_NOT_EXIST:
         # Red LED, error beeps, display error
@@ -214,6 +255,7 @@ def provide_feedback(state: FeedbackState, message: str = "") -> None:
         _play_beep_pattern([(400, 0.15), (400, 0.15), (400, 0.15)])  # Triple low beep
         _display_text(["✗ Card Unknown", "", "Card not", "registered"])
         LOG.warning("Feedback: Card Not Exist")
+        _schedule_led_clear(3.0)  # Auto-clear LED after 3 seconds
     
     elif state == FeedbackState.SCAN_ERROR:
         # Red LED, error tone, display error
@@ -221,6 +263,7 @@ def provide_feedback(state: FeedbackState, message: str = "") -> None:
         _play_beep_pattern([(300, 0.3)])  # Low error tone
         _display_text(["✗ Scan Error", "", message or "Try again"])
         LOG.error("Feedback: Scan Error - %s", message)
+        _schedule_led_clear(3.0)  # Auto-clear LED after 3 seconds
     
     elif state == FeedbackState.SYSTEM_UNAVAILABLE:
         # Red LED, warning beeps, display system error
@@ -228,6 +271,7 @@ def provide_feedback(state: FeedbackState, message: str = "") -> None:
         _play_beep_pattern([(500, 0.2), (500, 0.2)])  # Double warning beep
         _display_text(["✗ System", "  Unavailable", "", "Network or", "import issue"])
         LOG.error("Feedback: System Unavailable - %s", message)
+        _schedule_led_clear(3.0)  # Auto-clear LED after 3 seconds
     
     elif state == FeedbackState.READY_TO_SCAN:
         # Cyan LED (waiting state), no beep, display ready message
@@ -247,6 +291,18 @@ def provide_feedback(state: FeedbackState, message: str = "") -> None:
         _play_beep_pattern([(600, 0.1)])  # Quick acknowledgment beep
         _display_text(["Processing...", "", "Please wait"])
         LOG.info("Feedback: Processing Scan")
+    
+    elif state == FeedbackState.DEBOUNCED:
+        # Brief yellow LED blink to acknowledge card detected but debounced
+        _set_rgb_color(1, 1, 0)  # Yellow
+        LOG.debug("Feedback: Card Debounced")
+        time.sleep(0.1)  # Brief display
+        # Turn off LED after debounce acknowledgment
+        if _rgb_led is not None:
+            try:
+                _rgb_led.off()
+            except Exception as exc:
+                LOG.warning("Failed to turn off LED after debounce: %s", exc)
 
 
 def clear_feedback() -> None:
@@ -269,7 +325,12 @@ def clear_feedback() -> None:
 
 def shutdown_hardware() -> None:
     """Shutdown and cleanup hardware resources."""
-    global _rgb_led, _piezo, _oled
+    global _rgb_led, _piezo, _oled, _led_clear_timer
+    
+    # Cancel any pending LED clear timer
+    if _led_clear_timer is not None:
+        _led_clear_timer.cancel()
+        _led_clear_timer = None
     
     clear_feedback()
     
