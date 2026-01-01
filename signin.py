@@ -428,6 +428,7 @@ def rfid_entry() -> Tuple[int, Any]:
 
     try:
         from mfrc522 import SimpleMFRC522
+
         reader = SimpleMFRC522()
     except Exception as exc:
         result = 500, f"rfid_module_error: {exc}"
@@ -436,16 +437,41 @@ def rfid_entry() -> Tuple[int, Any]:
 
     try:
         _id, _text = reader.read()
-        serial = str(_id)
+
+        # Extract the 4-byte UID (strip off checksum byte if present)
+        # Convert to hex and format as XX:XX:XX:XX to match phone NFC apps
+        if isinstance(_id, int):
+            # Get hex string without '0x' prefix, pad to at least 8 hex chars (4 bytes)
+            hex_full = format(_id, "x").upper()
+            # Take only the first 8 hex characters (4 bytes)
+            hex_4byte = hex_full[:8].zfill(8)
+            # Format as XX:XX:XX:XX
+            serial = ":".join([hex_4byte[i : i + 2] for i in range(0, 8, 2)])
+        else:
+            serial = str(_id)
+
     except Exception as exc:
+        # AUTH ERROR from mfrc522 - typically means card read failed
+        # Don't process invalid reads
+        if "AUTH ERROR" in str(exc) or "status2reg" in str(exc):
+            LOG.debug(
+                "RFID authentication failed - card may be too far or incompatible"
+            )
+            return 204, "rfid_auth_failed"
         LOG.exception("RFID read failed: %s", exc)
         result = 500, f"rfid_read_error: {exc}"
         feedback(result, method="rfid")
         return result
 
+    # Validate the card serial is reasonable (not 0 or empty)
+    if not serial or serial == "0" or len(serial) < 3:
+        LOG.debug(f"Invalid card serial read: {serial}")
+        return 204, "invalid_card_serial"
+
     now_ts = time.monotonic()
     if serial == _LAST_CARD_SERIAL and now_ts - _LAST_CARD_SEEN < RFID_DEBOUNCE_SECONDS:
         _LAST_CARD_SEEN = now_ts
+        LOG.debug(f"Debounced duplicate read of {serial}")
         return 204, "debounced"
 
     _LAST_CARD_SERIAL = serial
@@ -552,8 +578,11 @@ if __name__ == "__main__":
                     if _HAS_HARDWARE_FEEDBACK:
                         provide_feedback(FeedbackState.READY_TO_SCAN)
                     waiting_logged = True
-                rfid_entry()
-                waiting_logged = False
+                status, _ = rfid_entry()
+                if status in (200, 201):
+                    waiting_logged = False
+                # Add small delay to prevent excessive polling
+                time.sleep(0.1)
             elif args.terminal:
                 if not waiting_logged:
                     if _HAS_HARDWARE_FEEDBACK:
