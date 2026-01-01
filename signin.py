@@ -59,6 +59,15 @@ WORKSHOP_LOOKAHEAD_MINUTES = int(os.getenv("WORKSHOP_LOOKAHEAD_MINUTES", "30"))
 # RFID debounce configuration
 RFID_DEBOUNCE_SECONDS = float(os.getenv("RFID_DEBOUNCE_SECONDS", "1.0"))
 
+# Error classification keywords for system unavailable feedback
+SYSTEM_UNAVAILABLE_KEYWORDS = [
+    "salesforce_not_connected",
+    "salesforce_error",
+    "network",
+    "import",
+    "module",
+]
+
 # Salesforce connection singleton
 sf: Optional["Salesforce"] = None
 
@@ -491,7 +500,7 @@ def feedback(result: Tuple[int, Any], method: str = "unknown") -> None:
     elif status == 500:
         # Server error - differentiate between system unavailable and scan error
         payload_str = str(payload).lower()
-        if any(keyword in payload_str for keyword in ["salesforce_not_connected", "salesforce_error", "network", "import", "module"]):
+        if any(keyword in payload_str for keyword in SYSTEM_UNAVAILABLE_KEYWORDS):
             # System unavailable (network/import issues)
             print(f"[{method}] Error {status}: System unavailable - {payload}")
             if _HAS_HARDWARE_FEEDBACK:

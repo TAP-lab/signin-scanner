@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import time
 from enum import Enum
-from typing import Any, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 LOG = logging.getLogger(__name__)
 LOG.addHandler(logging.NullHandler())
@@ -101,10 +101,21 @@ def _initialize_hardware() -> None:
             _image = Image.new("1", (_oled.width, _oled.height))
             _draw = ImageDraw.Draw(_image)
             
-            # Load default font
-            try:
-                _font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12)
-            except Exception:
+            # Try to load a TrueType font from common locations
+            _font = None
+            font_paths = [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            ]
+            for font_path in font_paths:
+                try:
+                    _font = ImageFont.truetype(font_path, 12)
+                    break
+                except Exception:
+                    continue
+            
+            if _font is None:
                 _font = ImageFont.load_default()
             
             LOG.info("OLED display initialized (%dx%d)", OLED_WIDTH, OLED_HEIGHT)
@@ -133,14 +144,14 @@ def _play_tone(frequency: float, duration: float) -> None:
             LOG.warning("Failed to play tone: %s", exc)
 
 
-def _play_beep_pattern(pattern: list[Tuple[float, float]]) -> None:
+def _play_beep_pattern(pattern: List[Tuple[float, float]]) -> None:
     """Play a pattern of beeps (frequency, duration) tuples."""
     for frequency, duration in pattern:
         _play_tone(frequency, duration)
         time.sleep(0.05)  # Short pause between beeps
 
 
-def _display_text(lines: list[str], clear: bool = True) -> None:
+def _display_text(lines: List[str], clear: bool = True) -> None:
     """Display text on OLED screen."""
     if _oled is None or _draw is None or _image is None:
         return
