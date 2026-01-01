@@ -6,6 +6,10 @@ SERVICE_USER=${SERVICE_USER:-root}
 SERVICE_GROUP=${SERVICE_GROUP:-root}
 
 INSTALL_DIR=/usr/local/signin-scanner
+ENVFILE="$INSTALL_DIR/.env"
+WORKDIR="$INSTALL_DIR"
+PYTHON_BIN="$INSTALL_DIR/.venv/bin/python"
+PIP_BIN="$INSTALL_DIR/.venv/bin/pip"
 
 if [[ ! -f "$ENVFILE" ]]; then
   echo "Missing $ENVFILE; please create it before installing." >&2
