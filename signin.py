@@ -48,6 +48,7 @@ SIGNIN_CONTACT_FIELD = os.getenv("SIGNIN_CONTACT_FIELD", "contact_id__c")
 SIGNIN_SIGNIN_FIELD = os.getenv("SIGNIN_SIGNIN_FIELD", "sign_in_time__c")
 SIGNIN_SIGNOUT_FIELD = os.getenv("SIGNIN_SIGNOUT_FIELD", "sign_out_time__c")
 SIGNIN_WORKSHOP_FIELD = os.getenv("SIGNIN_WORKSHOP_FIELD", "Workshop_Name__c")
+SIGNIN_NAME_FIELD = os.getenv("SIGNIN_NAME_FIELD", "Name__c")
 SIGNIN_RECORDTYPE_ID = os.getenv("SIGNIN_RECORDTYPE_ID", "")
 
 WORKSHOP_SOBJECT = os.getenv("WORKSHOP_SOBJECT", "TAP_lab_Workshop__c")
@@ -185,6 +186,42 @@ def sf_get_access_card_by_serial_number(
     rec = records[0]
     contact_id = rec.get(ACCESS_CARD_CONTACT_FIELD) if isinstance(rec, dict) else None
     return 200, {"contact_id": contact_id, "raw": rec}
+
+
+def sf_get_contact_name(contact_id: str) -> Tuple[int, str]:
+    """Fetch the contact's full name from Salesforce.
+    
+    Returns (status_code, full_name). On success, full_name is "FirstName LastName".
+    Returns empty string if contact not found or on error.
+    """
+    if not contact_id:
+        return 400, ""
+    
+    connected, err = _ensure_connected()
+    if not connected:
+        return err[0], ""
+    
+    esc = _escape_soql(contact_id)
+    query = f"SELECT FirstName, LastName FROM Contact WHERE Id = '{esc}' LIMIT 1"
+    
+    try:
+        res = sf.query(query)  # type: ignore[attr-defined]
+    except Exception as exc:
+        LOG.exception("Failed to query contact: %s", exc)
+        return 500, ""
+    
+    records = res.get("records", []) if isinstance(res, dict) else []
+    if not records:
+        LOG.warning("Contact not found: %s", contact_id)
+        return 404, ""
+    
+    rec = records[0]
+    first_name = rec.get("FirstName", "") or ""
+    last_name = rec.get("LastName", "") or ""
+    
+    # Combine first and last name with a space, strip extra whitespace
+    full_name = f"{first_name} {last_name}".strip()
+    return 200, full_name
 
 
 def sf_get_open_signins_for_contact(
@@ -351,6 +388,12 @@ def sf_create_signin_for_contact(
         time_to_signin if isinstance(time_to_signin, datetime.datetime) else None
     )
     workshop_name = sf_get_current_workshop(signin_time)
+    
+    # Fetch contact name
+    name_status, contact_name = sf_get_contact_name(contact_id)
+    if name_status != 200:
+        LOG.warning("Could not fetch contact name for %s, proceeding without name", contact_id)
+        contact_name = ""
 
     sobject = _get_sobject(SIGNIN_SOBJECT)
     if sobject is None:
@@ -360,6 +403,7 @@ def sf_create_signin_for_contact(
         SIGNIN_CONTACT_FIELD: contact_id,
         SIGNIN_SIGNIN_FIELD: time_val,
         SIGNIN_WORKSHOP_FIELD: workshop_name,
+        SIGNIN_NAME_FIELD: contact_name or "",
     }
     if SIGNIN_RECORDTYPE_ID:
         payload["RecordTypeId"] = SIGNIN_RECORDTYPE_ID
