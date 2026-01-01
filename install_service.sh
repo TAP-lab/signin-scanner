@@ -2,12 +2,9 @@
 set -euo pipefail
 
 SERVICE_NAME=signin
-SERVICE_USER=${SERVICE_USER:-$(id -un)}
-SERVICE_GROUP=${SERVICE_GROUP:-$(id -gn)}
-WORKDIR=$(cd "$(dirname "$0")" && pwd)
-ENVFILE="$WORKDIR/.env"
-PYTHON_BIN="$WORKDIR/.venv/bin/python"
-PIP_BIN="$WORKDIR/.venv/bin/pip"
+SERVICE_USER=${SERVICE_USER:-root}
+SERVICE_GROUP=${SERVICE_GROUP:-root}
+INSTALL_DIR=/usr/local/signin-scanner
 
 if [[ ! -f "$ENVFILE" ]]; then
   echo "Missing $ENVFILE; please create it before installing." >&2
@@ -21,8 +18,10 @@ fi
 "$PIP_BIN" install --upgrade pip
 "$PIP_BIN" install -r "$WORKDIR/requirements.txt"
 
-# Copy env to a system-safe location (avoids spaces in paths)
-sudo install -m 640 "$ENVFILE" /etc/default/$SERVICE_NAME
+echo "Setting up systemd service for signin-scanner..."
+echo "  Installation directory: $INSTALL_DIR"
+echo "  Service user: $SERVICE_USER"
+echo "  Service group: $SERVICE_GROUP"
 
 # Write systemd unit
 sudo tee /etc/systemd/system/$SERVICE_NAME.service > /dev/null <<EOF
