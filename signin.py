@@ -57,6 +57,9 @@ WORKSHOP_END_FIELD = os.getenv("WORKSHOP_END_FIELD", "End_Time__c")
 WORKSHOP_WEEKDAY_FIELD = os.getenv("WORKSHOP_WEEKDAY_FIELD", "Weekday__c")
 WORKSHOP_LOOKAHEAD_MINUTES = int(os.getenv("WORKSHOP_LOOKAHEAD_MINUTES", "30"))
 
+PENDING_CARD_SOBJECT = os.getenv("PENDING_CARD_SOBJECT", "Pending_card_registration__c")
+PENDING_CARD_SERIAL_FIELD = os.getenv("PENDING_CARD_SERIAL_FIELD", "Card_Serial__c")
+
 # RFID debounce configuration
 RFID_DEBOUNCE_SECONDS = float(os.getenv("RFID_DEBOUNCE_SECONDS", "1.0"))
 
@@ -155,6 +158,63 @@ def _get_sobject(sobject_name: str):
     return getattr(sf, sobject_name, None) if sf else None
 
 
+def sf_check_pending_card_exists(card_serial: str) -> bool:
+    """Check if a card serial number already exists in pending registrations.
+
+    Returns True if the serial exists, False otherwise.
+    """
+    if not card_serial:
+        return False
+
+    connected, err = _ensure_connected()
+    if not connected:
+        return False
+
+    esc = _escape_soql(card_serial)
+    query = f"SELECT Id FROM {PENDING_CARD_SOBJECT} WHERE {PENDING_CARD_SERIAL_FIELD} = '{esc}' LIMIT 1"
+    try:
+        res = sf.query(query)  # type: ignore[attr-defined]
+    except Exception as exc:
+        LOG.exception("Failed to check pending card: %s", exc)
+        return False
+
+    records = res.get("records", []) if isinstance(res, dict) else []
+    return len(records) > 0
+
+
+def sf_create_pending_card_registration(card_serial: str) -> bool:
+    """Create a pending card registration record for an unknown card serial.
+
+    Returns True if successful, False otherwise.
+    """
+    if not card_serial:
+        return False
+
+    connected, err = _ensure_connected()
+    if not connected:
+        return False
+
+    # Check if it already exists
+    if sf_check_pending_card_exists(card_serial):
+        LOG.debug(f"Card serial {card_serial} already in pending registrations")
+        return False
+
+    sobject = _get_sobject(PENDING_CARD_SOBJECT)
+    if sobject is None:
+        LOG.warning("Pending card registration object not available")
+        return False
+
+    payload = {PENDING_CARD_SERIAL_FIELD: card_serial}
+
+    try:
+        result = sobject.create(payload)
+        LOG.info(f"Created pending card registration for serial: {card_serial}")
+        return True
+    except Exception as exc:
+        LOG.exception("Failed to create pending card registration: %s", exc)
+        return False
+
+
 def sf_get_access_card_by_serial_number(
     card_serial: str,
 ) -> Tuple[int, Union[Dict[str, Any], str]]:
@@ -180,6 +240,8 @@ def sf_get_access_card_by_serial_number(
 
     records = res.get("records", []) if isinstance(res, dict) else []
     if not records:
+        # Card not found - log to pending registrations in the background
+        sf_create_pending_card_registration(card_serial)
         return 404, "card_not_exists"
 
     rec = records[0]
