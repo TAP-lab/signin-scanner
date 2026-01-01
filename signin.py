@@ -252,35 +252,35 @@ def sf_get_access_card_by_serial_number(
 
 def sf_get_contact_name(contact_id: str) -> Tuple[int, str]:
     """Fetch the contact's full name from Salesforce.
-    
+
     Returns (status_code, full_name). On success, full_name is "FirstName LastName".
     Returns empty string if contact not found or on error.
     """
     if not contact_id:
         return 400, ""
-    
+
     connected, err = _ensure_connected()
     if not connected:
         return err[0], ""
-    
+
     esc = _escape_soql(contact_id)
     query = f"SELECT FirstName, LastName FROM Contact WHERE Id = '{esc}' LIMIT 1"
-    
+
     try:
         res = sf.query(query)  # type: ignore[attr-defined]
     except Exception as exc:
         LOG.exception("Failed to query contact: %s", exc)
         return 500, ""
-    
+
     records = res.get("records", []) if isinstance(res, dict) else []
     if not records:
         LOG.warning("Contact not found: %s", contact_id)
         return 404, ""
-    
+
     rec = records[0]
     first_name = rec.get("FirstName", "") or ""
     last_name = rec.get("LastName", "") or ""
-    
+
     # Combine first and last name with a space, strip extra whitespace
     full_name = f"{first_name} {last_name}".strip()
     return 200, full_name
@@ -297,10 +297,7 @@ def sf_get_open_signins_for_contact(
         return err
 
     esc = _escape_soql(contact_id)
-    query = f"SELECT Id FROM {SIGNIN_SOBJECT} WHERE {SIGNIN_CONTACT_FIELD} = '{esc}'"
-    if SIGNIN_RECORDTYPE_ID:
-        query += f" AND recordTypeId = '{_escape_soql(SIGNIN_RECORDTYPE_ID)}'"
-    query += f" AND {SIGNIN_SIGNOUT_FIELD} = NULL"
+    query = f"SELECT Id FROM {SIGNIN_SOBJECT} WHERE {SIGNIN_CONTACT_FIELD} = '{esc}' AND {SIGNIN_SIGNOUT_FIELD} = NULL"
 
     try:
         res = sf.query(query)  # type: ignore[attr-defined]
@@ -450,11 +447,13 @@ def sf_create_signin_for_contact(
         time_to_signin if isinstance(time_to_signin, datetime.datetime) else None
     )
     workshop_name = sf_get_current_workshop(signin_time)
-    
+
     # Fetch contact name
     name_status, contact_name = sf_get_contact_name(contact_id)
     if name_status != 200:
-        LOG.warning("Could not fetch contact name for %s, proceeding without name", contact_id)
+        LOG.warning(
+            "Could not fetch contact name for %s, proceeding without name", contact_id
+        )
         contact_name = ""
 
     sobject = _get_sobject(SIGNIN_SOBJECT)
@@ -593,7 +592,9 @@ def rfid_entry() -> Tuple[int, Any]:
     return result
 
 
-def feedback(result: Tuple[int, Any], method: str = "unknown", card_serial: str = "") -> None:
+def feedback(
+    result: Tuple[int, Any], method: str = "unknown", card_serial: str = ""
+) -> None:
     """Provide feedback for a signin/signout result using hardware and console.
 
     Maps status codes to appropriate feedback states:
@@ -636,7 +637,9 @@ def feedback(result: Tuple[int, Any], method: str = "unknown", card_serial: str 
         # Card not found - pass the card serial instead of the error message
         print(f"[{method}] Error {status}: Card not registered")
         if _HAS_HARDWARE_FEEDBACK:
-            provide_feedback(FeedbackState.CARD_NOT_EXIST, card_serial if card_serial else message)
+            provide_feedback(
+                FeedbackState.CARD_NOT_EXIST, card_serial if card_serial else message
+            )
     elif status == 500:
         # Server error - differentiate between system unavailable and scan error
         payload_str = str(payload).lower()
