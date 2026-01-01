@@ -88,7 +88,6 @@ def _initialize_hardware() -> None:
         except Exception as exc:
             LOG.warning("Failed to initialize RGB LED: %s", exc)
             _rgb_led = None
-            _rgb_led = None
     
     # Initialize piezo buzzer
     if _HAS_GPIO and _piezo is None:
