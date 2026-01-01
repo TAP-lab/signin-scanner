@@ -188,18 +188,18 @@ def sf_get_access_card_by_serial_number(
     return 200, {"contact_id": contact_id, "raw": rec}
 
 
-def sf_get_contact_name(contact_id: str) -> Tuple[int, Union[str, None]]:
+def sf_get_contact_name(contact_id: str) -> Tuple[int, str]:
     """Fetch the contact's full name from Salesforce.
     
     Returns (status_code, full_name). On success, full_name is "FirstName LastName".
-    Returns empty string if both names are missing.
+    Returns empty string if contact not found or on error.
     """
     if not contact_id:
-        return 400, None
+        return 400, ""
     
     connected, err = _ensure_connected()
     if not connected:
-        return err[0], None
+        return err[0], ""
     
     esc = _escape_soql(contact_id)
     query = f"SELECT FirstName, LastName FROM Contact WHERE Id = '{esc}' LIMIT 1"
@@ -208,12 +208,12 @@ def sf_get_contact_name(contact_id: str) -> Tuple[int, Union[str, None]]:
         res = sf.query(query)  # type: ignore[attr-defined]
     except Exception as exc:
         LOG.exception("Failed to query contact: %s", exc)
-        return 500, None
+        return 500, ""
     
     records = res.get("records", []) if isinstance(res, dict) else []
     if not records:
-        LOG.warning(f"Contact not found: {contact_id}")
-        return 404, None
+        LOG.warning("Contact not found: %s", contact_id)
+        return 404, ""
     
     rec = records[0]
     first_name = rec.get("FirstName", "") or ""
@@ -392,7 +392,7 @@ def sf_create_signin_for_contact(
     # Fetch contact name
     name_status, contact_name = sf_get_contact_name(contact_id)
     if name_status != 200:
-        LOG.warning(f"Could not fetch contact name for {contact_id}, proceeding without name")
+        LOG.warning("Could not fetch contact name for %s, proceeding without name", contact_id)
         contact_name = ""
 
     sobject = _get_sobject(SIGNIN_SOBJECT)
