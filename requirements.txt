@@ -3,3 +3,8 @@ simple-salesforce
 python-dotenv
 # mfrc522 is Raspberry-Pi specific; install only on Linux
 mfrc522; sys_platform == "linux"
+
+# Hardware feedback dependencies (Raspberry Pi specific)
+gpiozero; sys_platform == "linux"
+adafruit-circuitpython-ssd1306; sys_platform == "linux"
+pillow; sys_platform == "linux"

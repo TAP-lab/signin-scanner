@@ -27,6 +27,13 @@ except Exception:
     # `python-dotenv` may not be installed in all environments; continue.
     pass
 
+# Import hardware feedback module
+try:
+    from feedback_hardware import FeedbackState, provide_feedback, clear_feedback, shutdown_hardware
+    _HAS_HARDWARE_FEEDBACK = True
+except ImportError:
+    _HAS_HARDWARE_FEEDBACK = False
+
 LOG = logging.getLogger(__name__)
 LOG.addHandler(logging.NullHandler())
 
@@ -391,7 +398,13 @@ def terminal_entry() -> Tuple[int, Any]:
     try:
         serial = input("Enter card serial: ").strip()
     except Exception as exc:
-        return 500, f"input_error: {exc}"
+        result = 500, f"input_error: {exc}"
+        feedback(result, method="terminal")
+        return result
+
+    # Show processing feedback
+    if _HAS_HARDWARE_FEEDBACK:
+        provide_feedback(FeedbackState.PROCESSING_SCAN)
 
     result = process_signin_from_card_serial(serial)
     feedback(result, method="terminal")
@@ -405,14 +418,18 @@ def rfid_entry() -> Tuple[int, Any]:
         from mfrc522 import SimpleMFRC522
         reader = SimpleMFRC522()
     except Exception as exc:
-        return 500, f"rfid_module_error: {exc}"
+        result = 500, f"rfid_module_error: {exc}"
+        feedback(result, method="rfid")
+        return result
 
     try:
         _id, _text = reader.read()
         serial = str(_id)
     except Exception as exc:
         LOG.exception("RFID read failed: %s", exc)
-        return 500, f"rfid_read_error: {exc}"
+        result = 500, f"rfid_read_error: {exc}"
+        feedback(result, method="rfid")
+        return result
 
     now_ts = time.monotonic()
     if serial == _LAST_CARD_SERIAL and now_ts - _LAST_CARD_SEEN < RFID_DEBOUNCE_SECONDS:
@@ -422,22 +439,73 @@ def rfid_entry() -> Tuple[int, Any]:
     _LAST_CARD_SERIAL = serial
     _LAST_CARD_SEEN = now_ts
 
+    # Show processing feedback
+    if _HAS_HARDWARE_FEEDBACK:
+        provide_feedback(FeedbackState.PROCESSING_SCAN)
+
     result = process_signin_from_card_serial(serial)
     feedback(result, method="rfid")
     return result
 
 
 def feedback(result: Tuple[int, Any], method: str = "unknown") -> None:
+    """Provide feedback for a signin/signout result using hardware and console.
+    
+    Maps status codes to appropriate feedback states:
+    - 200/201: Success (signed in or signed out)
+    - 404 with "card_not_exists": Card not registered
+    - 500 with network/import errors: System unavailable
+    - 500 with other errors: Scan/processing error
+    - 204: Debounced (no feedback)
+    """
     try:
         status, payload = result
     except Exception:
         print(f"[{method}] invalid result: {result}")
         return
 
-    if status in (200, 201):
-        print(f"[{method}] Success: {payload}")
+    # Determine the message to display
+    message = str(payload) if not isinstance(payload, dict) else str(payload.get("id", ""))
+
+    # Map status codes to feedback states
+    if status == 204:
+        # Debounced - no feedback needed
+        return
+    elif status in (200, 201):
+        # Success - determine if sign-in or sign-out
+        if status == 201 or (isinstance(payload, str) and "successfully_signed_out" not in payload):
+            # Sign-in (201 created)
+            print(f"[{method}] Success: Signed In")
+            if _HAS_HARDWARE_FEEDBACK:
+                provide_feedback(FeedbackState.SIGNED_IN, message)
+        else:
+            # Sign-out (200 with sign-out message)
+            print(f"[{method}] Success: Signed Out")
+            if _HAS_HARDWARE_FEEDBACK:
+                provide_feedback(FeedbackState.SIGNED_OUT, message)
+    elif status == 404:
+        # Card not found
+        print(f"[{method}] Error {status}: Card not registered")
+        if _HAS_HARDWARE_FEEDBACK:
+            provide_feedback(FeedbackState.CARD_NOT_EXIST, message)
+    elif status == 500:
+        # Server error - differentiate between system unavailable and scan error
+        payload_str = str(payload).lower()
+        if any(keyword in payload_str for keyword in ["salesforce_not_connected", "salesforce_error", "network", "import", "module"]):
+            # System unavailable (network/import issues)
+            print(f"[{method}] Error {status}: System unavailable - {payload}")
+            if _HAS_HARDWARE_FEEDBACK:
+                provide_feedback(FeedbackState.SYSTEM_UNAVAILABLE, message)
+        else:
+            # General scan/processing error
+            print(f"[{method}] Error {status}: Scan error - {payload}")
+            if _HAS_HARDWARE_FEEDBACK:
+                provide_feedback(FeedbackState.SCAN_ERROR, message)
     else:
+        # Other errors
         print(f"[{method}] Error {status}: {payload}")
+        if _HAS_HARDWARE_FEEDBACK:
+            provide_feedback(FeedbackState.SCAN_ERROR, message)
 
 
 if __name__ == "__main__":
@@ -465,12 +533,19 @@ if __name__ == "__main__":
             if args.rfid:
                 if not waiting_logged:
                     LOG.info("Waiting for RFID card...")
+                    if _HAS_HARDWARE_FEEDBACK:
+                        provide_feedback(FeedbackState.READY_TO_SCAN)
                     waiting_logged = True
                 rfid_entry()
                 waiting_logged = False
             elif args.terminal:
+                if _HAS_HARDWARE_FEEDBACK and not waiting_logged:
+                    provide_feedback(FeedbackState.READY_TO_SCAN)
+                    waiting_logged = True
                 terminal_entry()
                 waiting_logged = False
     except KeyboardInterrupt:
         LOG.info("\nStopped by user.")
+        if _HAS_HARDWARE_FEEDBACK:
+            shutdown_hardware()
         raise SystemExit(0)
