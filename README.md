@@ -7,13 +7,22 @@ A Raspberry Pi sign-in processor that reads RFID cards or terminal input to crea
 - Salesforce-backed lookups and record creation
 - Continuous operation mode with RFID debounce
 - Systemd service install script for autonomous operation
+- **User feedback loop with RGB LED, passive piezo buzzer, and OLED display**
+  - Visual feedback via RGB LED (different colors for different states)
+  - Audio feedback via passive piezo buzzer (different beep patterns)
+  - Display feedback via 128x128 monochrome OLED (status messages)
+  - Graceful fallback when hardware is not available
 
 ## Prerequisites
-- Raspberry Pi (with SPI enabled for MFRC522 RFID reader)
+- Raspberry Pi (with SPI and I2C enabled)
 - Python 3.9+
 - Salesforce credentials with API access
 - Network connectivity to Salesforce
-- Hardware: MFRC522 RFID reader (optional, can use terminal input)
+- Hardware (optional, system works without hardware feedback):
+  - MFRC522 RFID reader (for card scanning)
+  - RGB LED (common cathode) with resistors
+  - Passive piezo buzzer
+  - 128x128 monochrome OLED display (I2C, SSD1306)
 
 ## Setup
 1) Clone/copy this folder to the Pi
@@ -49,14 +58,35 @@ chmod +x install_service.sh
 - Logs: `journalctl -u signin -f`
 
 ## Wiring (quick reference)
-- MFRC522 (SPI): 3.3V, GND, SDA→GPIO8 (CE0), SCK→GPIO11, MOSI→GPIO10, MISO→GPIO9, RST→GPIO25
-- Enable SPI on the Pi via `raspi-config` (Interface Options → SPI)
-- See `wiring.md` for detailed pin mappings
+- **MFRC522 RFID (SPI)**: 3.3V, GND, SDA→GPIO8 (CE0), SCK→GPIO11, MOSI→GPIO10, MISO→GPIO9, RST→GPIO25
+- **RGB LED**: Red→GPIO17, Green→GPIO27, Blue→GPIO22, Common Cathode→GND (use 220Ω resistors)
+- **Piezo Buzzer**: Positive→GPIO23, Negative→GND
+- **OLED Display (I2C)**: VCC→3.3V/5V, GND, SDA→GPIO2, SCL→GPIO3
+- Enable **SPI and I2C** on the Pi via `raspi-config` (Interface Options)
+- See `wiring.md` for detailed pin mappings and configuration
 
 ## Environment variables (see .env)
 - Salesforce: `SF_USERNAME`, `SF_PASSWORD`, `SF_SECURITY_TOKEN`, `SF_DOMAIN`
 - Objects/fields: `ACCESS_CARD_*`, `SIGNIN_*`, `WORKSHOP_*`
 - RFID: `RFID_DEBOUNCE_SECONDS` (default: 1.0)
+
+## User Feedback States
+The system provides visual (LED), audio (buzzer), and display (OLED) feedback for the following states:
+
+| State | LED Color | Audio | Display Message |
+|-------|-----------|-------|-----------------|
+| **Ready to Scan** | Cyan | None | "Please scan your card" |
+| **Processing Scan** | Yellow | Quick beep | "Processing..." |
+| **Signed In** | Green (3s) | Rising beep | "✓ Signed In - Welcome!" |
+| **Signed Out** | Blue (3s) | Falling beep | "✓ Signed Out - Goodbye!" |
+| **Card Not Found** | Red (3s) | Triple low beep | "✗ Card Unknown" |
+| **Scan/Processing Error** | Red (3s) | Low error tone | "✗ Scan Error" |
+| **System Unavailable** | Red (3s) | Double warning beep | "✗ System Unavailable" |
+| **Debounced** | Yellow (0.1s) | None | (No display) |
+
+> **Note:** Display messages shown above are simplified for readability. On the actual OLED, messages are rendered across multiple lines. For example, **Signed In** displays as `"✓ Signed In"` on line 1, a blank line, then `"Welcome!"` on line 3.
+
+The feedback system gracefully degrades when hardware is not available (e.g., on non-Pi systems or during development). For result states (signed in/out, errors), the LED automatically turns off after 3 seconds to avoid confusion. The debounced state provides a brief 0.1s yellow blink to acknowledge card detection without disrupting the user flow.
 
 ## Notes
 - Uses OS local timezone (with DST) for workshop matching
