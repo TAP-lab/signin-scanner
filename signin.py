@@ -196,7 +196,7 @@ def sf_create_pending_card_registration(card_serial: str) -> bool:
 
     # Check if it already exists
     if sf_check_pending_card_exists(card_serial):
-        LOG.debug(f"Card serial {card_serial} already in pending registrations")
+        LOG.debug("Card serial %s already in pending registrations", card_serial)
         return False
 
     sobject = _get_sobject(PENDING_CARD_SOBJECT)
@@ -208,7 +208,7 @@ def sf_create_pending_card_registration(card_serial: str) -> bool:
 
     try:
         result = sobject.create(payload)
-        LOG.info(f"Created pending card registration for serial: {card_serial}")
+        LOG.info("Created pending card registration for serial: %s", card_serial)
         return True
     except Exception as exc:
         LOG.exception("Failed to create pending card registration: %s", exc)
