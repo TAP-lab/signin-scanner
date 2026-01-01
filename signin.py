@@ -551,8 +551,9 @@ if __name__ == "__main__":
                 rfid_entry()
                 waiting_logged = False
             elif args.terminal:
-                if _HAS_HARDWARE_FEEDBACK and not waiting_logged:
-                    provide_feedback(FeedbackState.READY_TO_SCAN)
+                if not waiting_logged:
+                    if _HAS_HARDWARE_FEEDBACK:
+                        provide_feedback(FeedbackState.READY_TO_SCAN)
                     waiting_logged = True
                 terminal_entry()
                 waiting_logged = False
