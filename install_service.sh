@@ -58,6 +58,19 @@ echo "Enabling service for boot..."
 systemctl daemon-reload
 systemctl enable $SERVICE_NAME
 
+# Setup nightly reboot cron job
+echo "Setting up nightly reboot cron job..."
+CRON_CMD="0 1 * * * /sbin/reboot"
+CRON_COMMENT="# Nightly reboot for signin-scanner at 1:00 AM"
+
+# Add cron job for root user (or specified service user)
+if ! crontab -u root -l 2>/dev/null | grep -q "Nightly reboot for signin-scanner"; then
+  (crontab -u root -l 2>/dev/null || true; echo "$CRON_COMMENT"; echo "$CRON_CMD") | crontab -u root -
+  echo "  ✓ Nightly reboot cron job installed (runs at 1:00 AM daily)"
+else
+  echo "  ✓ Nightly reboot cron job already exists"
+fi
+
 echo ""
 echo "✓ Service configured successfully!"
 echo ""
@@ -68,5 +81,10 @@ echo "  sudo systemctl restart $SERVICE_NAME    # Restart the service"
 echo "  sudo systemctl status $SERVICE_NAME     # View service status"
 echo "  sudo journalctl -u $SERVICE_NAME -f     # View live logs"
 echo ""
+echo "Nightly reboot cron job:"
+echo "  sudo crontab -l                         # View root cron jobs"
+echo "  sudo crontab -e                         # Edit cron jobs (to disable reboot)"
+echo ""
 echo "The service will automatically start on next boot."
+echo "The system will reboot daily at 1:00 AM for maintenance."
 echo ""

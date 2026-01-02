@@ -35,6 +35,14 @@ try:
 except ImportError:
     _HAS_HARDWARE_FEEDBACK = False
 
+# Import network monitor module
+try:
+    from network_monitor import NetworkMonitor
+
+    _HAS_NETWORK_MONITOR = True
+except ImportError:
+    _HAS_NETWORK_MONITOR = False
+
 LOG = logging.getLogger(__name__)
 LOG.addHandler(logging.NullHandler())
 
@@ -82,6 +90,36 @@ sf: Optional["Salesforce"] = None
 # Debounce tracking for RFID reads
 _LAST_CARD_SERIAL: Optional[str] = None
 _LAST_CARD_SEEN: float = 0.0
+
+# Network monitor instance
+_network_monitor: Optional["NetworkMonitor"] = None
+_network_error_displayed: bool = False
+
+
+def _should_show_ready_feedback() -> bool:
+    """Check if ready feedback should be shown.
+    
+    Returns False if network error is currently displayed.
+    """
+    return _HAS_HARDWARE_FEEDBACK and not _network_error_displayed
+
+
+def _on_network_connection_lost() -> None:
+    """Callback when network connection is lost."""
+    global _network_error_displayed
+    LOG.warning("Network connection lost - displaying error")
+    if _HAS_HARDWARE_FEEDBACK:
+        provide_feedback(FeedbackState.NETWORK_ERROR)
+    _network_error_displayed = True
+
+
+def _on_network_connection_restored() -> None:
+    """Callback when network connection is restored."""
+    global _network_error_displayed
+    LOG.info("Network connection restored - returning to ready state")
+    if _HAS_HARDWARE_FEEDBACK and _network_error_displayed:
+        provide_feedback(FeedbackState.READY_TO_SCAN)
+    _network_error_displayed = False
 
 
 def _escape_soql(value: str) -> str:
@@ -677,6 +715,17 @@ if __name__ == "__main__":
 
     connect_to_salesforce()
 
+    # Start network monitor
+    if _HAS_NETWORK_MONITOR:
+        _network_monitor = NetworkMonitor(
+            on_connection_lost=_on_network_connection_lost,
+            on_connection_restored=_on_network_connection_restored,
+        )
+        _network_monitor.start()
+        LOG.info("Network monitoring enabled")
+    else:
+        LOG.warning("Network monitoring not available")
+
     waiting_logged = False
 
     LOG.info("Running. Press Ctrl+C to stop.")
@@ -685,7 +734,7 @@ if __name__ == "__main__":
             if args.rfid:
                 if not waiting_logged:
                     LOG.info("Waiting for RFID card...")
-                    if _HAS_HARDWARE_FEEDBACK:
+                    if _should_show_ready_feedback():
                         provide_feedback(FeedbackState.READY_TO_SCAN)
                     waiting_logged = True
                 status, _ = rfid_entry()
@@ -698,7 +747,7 @@ if __name__ == "__main__":
                 time.sleep(0.1)
             elif args.terminal:
                 if not waiting_logged:
-                    if _HAS_HARDWARE_FEEDBACK:
+                    if _should_show_ready_feedback():
                         provide_feedback(FeedbackState.READY_TO_SCAN)
                     waiting_logged = True
                 terminal_entry()
@@ -706,6 +755,8 @@ if __name__ == "__main__":
                 waiting_logged = False
     except KeyboardInterrupt:
         LOG.info("\nStopped by user.")
+        if _network_monitor is not None:
+            _network_monitor.stop()
         if _HAS_HARDWARE_FEEDBACK:
             shutdown_hardware()
         raise SystemExit(0)
