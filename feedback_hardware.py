@@ -333,10 +333,10 @@ def provide_feedback(state: FeedbackState, message: str = "") -> None:
         _schedule_led_and_oled_clear(8.0)  # Auto-clear LED and OLED after 8 seconds
 
     elif state == FeedbackState.NETWORK_ERROR:
-        # Red LED (solid), warning beeps, display network error
+        # Red LED (solid), no beep, display network error
         # This state persists until network is restored
         _set_rgb_color(1, 0, 0)  # Red
-        _play_beep_pattern([(700, 0.2), (700, 0.2)])  # Double warning beep
+        # No beep - silent warning
         _display_text(["✗ Network Error", "Checking", "connection..."])
         LOG.error("Feedback: Network Error - %s", message)
         # Don't auto-clear for network errors - they persist until resolved

@@ -92,25 +92,29 @@ The feedback system gracefully degrades when hardware is not available (e.g., on
 ## Network Monitoring and Recovery
 The system includes automatic network monitoring to ensure reliable operation:
 
-- **Connectivity Checks**: Every 30 seconds, the system checks internet connectivity by pinging reliable hosts (Google DNS, Cloudflare DNS)
-- **Network Error Display**: When connection is lost, the system displays "Network Error" on the OLED with a persistent red LED to alert users
+- **Connectivity Checks**: Every 10 minutes, the system checks internet connectivity by pinging Google DNS (8.8.8.8)
+- **Network Error Display**: When connection is lost, the system displays "Network Error" on the OLED with a persistent red LED (silent, no beep)
 - **Automatic Recovery**: After 3 consecutive failed connectivity checks, the system attempts to restart network services
+- **Recovery Methods**: Tries bringing wlan0 interface down/up, restarting wpa_supplicant, networking service, and dhcpcd
 - **Restart Cooldown**: Network restart attempts are rate-limited to once every 5 minutes to prevent excessive restarts
+- **System Reboot**: After 6 failed restart attempts (approximately 1 hour of failures), the system will reboot as a last resort
 - **Connection Restoration**: When connectivity is restored, the system automatically returns to normal operation
 
 > **Note:** For automatic network service restart to work, the service user needs sudo permissions. Add the following to `/etc/sudoers.d/signin-scanner`:
 > ```
+> signin ALL=(ALL) NOPASSWD: /sbin/ifconfig
+> signin ALL=(ALL) NOPASSWD: /bin/systemctl restart wpa_supplicant
 > signin ALL=(ALL) NOPASSWD: /bin/systemctl restart networking
-> signin ALL=(ALL) NOPASSWD: /bin/systemctl restart NetworkManager
 > signin ALL=(ALL) NOPASSWD: /bin/systemctl restart dhcpcd
+> signin ALL=(ALL) NOPASSWD: /sbin/reboot
 > ```
 > Replace `signin` with your actual service user if different.
 
 ### Nightly Reboot
-To maintain system reliability, a scheduled reboot occurs at 1:00 AM daily:
+To maintain system reliability, a scheduled reboot occurs at 1:00 AM daily via cron:
 - Helps clear memory leaks and reset system state
-- Randomized by up to 5 minutes to avoid simultaneous reboots of multiple devices
-- Can be disabled by stopping the `signin-nightly-reboot.timer` service
+- Implemented as a simple cron job for minimal overhead
+- Can be disabled by editing root's crontab: `sudo crontab -e`
 
 ## Notes
 - Uses OS local timezone (with DST) for workshop matching

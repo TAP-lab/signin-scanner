@@ -18,15 +18,13 @@ LOG = logging.getLogger(__name__)
 LOG.addHandler(logging.NullHandler())
 
 # Configuration
-CHECK_INTERVAL_SECONDS = 30  # How often to check connectivity
+CHECK_INTERVAL_SECONDS = 600  # How often to check connectivity (10 minutes)
 FAILURE_THRESHOLD = 3  # Number of consecutive failures before restart
 RESTART_COOLDOWN_SECONDS = 300  # Wait 5 minutes between restart attempts
+MAX_RESTART_ATTEMPTS = 6  # Maximum restart attempts before system reboot (1 hour of failures)
 
-# Hosts to ping for connectivity check (try multiple for reliability)
-PING_HOSTS = [
-    "8.8.8.8",  # Google DNS
-    "1.1.1.1",  # Cloudflare DNS
-]
+# Host to ping for connectivity check
+PING_HOST = "8.8.8.8"  # Google DNS
 
 
 class NetworkMonitor:
@@ -60,6 +58,7 @@ class NetworkMonitor:
         self._consecutive_failures = 0
         self._last_restart_time = 0.0
         self._was_connected = True  # Assume connected at start
+        self._restart_attempts = 0  # Track number of restart attempts
 
     def start(self) -> None:
         """Start network monitoring in background thread."""
@@ -93,26 +92,23 @@ class NetworkMonitor:
         Returns:
             True if connected, False otherwise
         """
-        for host in PING_HOSTS:
-            try:
-                # Ping with 2 second timeout, single packet
-                # Subprocess timeout slightly longer than ping timeout
-                result = subprocess.run(
-                    ["ping", "-c", "1", "-W", "2", host],
-                    capture_output=True,
-                    timeout=2.5,
-                )
-                if result.returncode == 0:
-                    LOG.debug("Connectivity check passed (host=%s)", host)
-                    return True
-            except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-                LOG.debug("Ping to %s failed: %s", host, exc)
-                continue
-            except Exception as exc:
-                LOG.warning("Unexpected error pinging %s: %s", host, exc)
-                continue
+        try:
+            # Ping with 2 second timeout, single packet
+            # Subprocess timeout slightly longer than ping timeout
+            result = subprocess.run(
+                ["ping", "-c", "1", "-W", "2", PING_HOST],
+                capture_output=True,
+                timeout=2.5,
+            )
+            if result.returncode == 0:
+                LOG.debug("Connectivity check passed (host=%s)", PING_HOST)
+                return True
+        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+            LOG.debug("Ping to %s failed: %s", PING_HOST, exc)
+        except Exception as exc:
+            LOG.warning("Unexpected error pinging %s: %s", PING_HOST, exc)
 
-        LOG.warning("All connectivity checks failed")
+        LOG.warning("Connectivity check failed")
         return False
 
     def restart_network_services(self) -> bool:
@@ -129,14 +125,30 @@ class NetworkMonitor:
             )
             return False
 
-        LOG.warning("Attempting to restart network services")
+        LOG.warning("Attempting to restart network services (attempt %d)", self._restart_attempts + 1)
         self._last_restart_time = now
+        self._restart_attempts += 1
+
+        # Check if we've exceeded maximum restart attempts
+        if self._restart_attempts >= MAX_RESTART_ATTEMPTS:
+            LOG.error(
+                "Maximum restart attempts (%d) reached. Rebooting system as last resort.",
+                MAX_RESTART_ATTEMPTS,
+            )
+            self._reboot_system()
+            return True
 
         # Try multiple approaches to restart networking
         # Note: These require appropriate sudo permissions configured
         commands = [
+            # Try bringing wlan0 interface down and up
+            ["sudo", "ifconfig", "wlan0", "down"],
+            ["sudo", "ifconfig", "wlan0", "up"],
+            # Restart wpa_supplicant for WiFi authentication
+            ["sudo", "systemctl", "restart", "wpa_supplicant"],
+            # Restart networking service
             ["sudo", "systemctl", "restart", "networking"],
-            ["sudo", "systemctl", "restart", "NetworkManager"],
+            # Restart dhcpcd for DHCP
             ["sudo", "systemctl", "restart", "dhcpcd"],
         ]
 
@@ -188,6 +200,18 @@ class NetworkMonitor:
 
         return True
 
+    def _reboot_system(self) -> None:
+        """Reboot the system as a last resort recovery measure."""
+        LOG.critical("Initiating system reboot due to prolonged network failure")
+        try:
+            subprocess.run(
+                ["sudo", "/sbin/reboot"],
+                capture_output=True,
+                timeout=5,
+            )
+        except Exception as exc:
+            LOG.error("Failed to reboot system: %s", exc)
+
     def _monitor_loop(self) -> None:
         """Main monitoring loop (runs in background thread)."""
         while self._running:
@@ -206,6 +230,7 @@ class NetworkMonitor:
                             self.on_connection_restored()
                         self._was_connected = True
                     self._consecutive_failures = 0
+                    self._restart_attempts = 0  # Reset restart counter on successful connection
                 else:
                     # Connection failed
                     self._consecutive_failures += 1
