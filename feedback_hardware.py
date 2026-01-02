@@ -290,7 +290,7 @@ def provide_feedback(state: FeedbackState, message: str = "") -> None:
         _play_beep_pattern([(1200, 0.1), (1500, 0.2)])  # Rising beep
         _display_text(["Welcome!", "You have been", "signed in"])
         LOG.info("Feedback: Signed In")
-        _schedule_led_clear(6.0)  # Auto-clear LED after 6 seconds
+        _schedule_led_and_oled_clear(6.0)  # Auto-clear LED and OLED after 6 seconds
 
     elif state == FeedbackState.SIGNED_OUT:
         # Blue LED, double beep, display "Signed Out"
@@ -298,7 +298,7 @@ def provide_feedback(state: FeedbackState, message: str = "") -> None:
         _play_beep_pattern([(1500, 0.1), (1200, 0.2)])  # Falling beep
         _display_text(["Goodbye!", "You have been", "signed out"])
         LOG.info("Feedback: Signed Out")
-        _schedule_led_clear(6.0)  # Auto-clear LED after 6 seconds
+        _schedule_led_and_oled_clear(6.0)  # Auto-clear LED and OLED after 6 seconds
 
     elif state == FeedbackState.CARD_NOT_EXIST:
         # Red LED, error beeps, display error
