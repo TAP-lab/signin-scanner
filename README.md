@@ -82,11 +82,27 @@ The system provides visual (LED), audio (buzzer), and display (OLED) feedback fo
 | **Card Not Found** | Red (3s) | Triple low beep | "✗ Card Unknown" |
 | **Scan/Processing Error** | Red (3s) | Low error tone | "✗ Scan Error" |
 | **System Unavailable** | Red (3s) | Double warning beep | "✗ System Unavailable" |
+| **Network Error** | Red (persistent) | Double warning beep | "✗ Network Error" |
 | **Debounced** | Yellow (0.1s) | None | (No display) |
 
 > **Note:** Display messages shown above are simplified for readability. On the actual OLED, messages are rendered across multiple lines. For example, **Signed In** displays as `"✓ Signed In"` on line 1, a blank line, then `"Welcome!"` on line 3.
 
 The feedback system gracefully degrades when hardware is not available (e.g., on non-Pi systems or during development). For result states (signed in/out, errors), the LED automatically turns off after 3 seconds to avoid confusion. The debounced state provides a brief 0.1s yellow blink to acknowledge card detection without disrupting the user flow.
+
+## Network Monitoring and Recovery
+The system includes automatic network monitoring to ensure reliable operation:
+
+- **Connectivity Checks**: Every 30 seconds, the system checks internet connectivity by pinging reliable hosts (Google DNS, Cloudflare DNS)
+- **Network Error Display**: When connection is lost, the system displays "Network Error" on the OLED with a persistent red LED to alert users
+- **Automatic Recovery**: After 3 consecutive failed connectivity checks, the system attempts to restart network services
+- **Restart Cooldown**: Network restart attempts are rate-limited to once every 5 minutes to prevent excessive restarts
+- **Connection Restoration**: When connectivity is restored, the system automatically returns to normal operation
+
+### Nightly Reboot
+To maintain system reliability, a scheduled reboot occurs at 1:00 AM daily:
+- Helps clear memory leaks and reset system state
+- Randomized by up to 5 minutes to avoid simultaneous reboots of multiple devices
+- Can be disabled by stopping the `signin-nightly-reboot.timer` service
 
 ## Notes
 - Uses OS local timezone (with DST) for workshop matching

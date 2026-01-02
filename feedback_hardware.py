@@ -62,6 +62,7 @@ class FeedbackState(Enum):
     CARD_NOT_EXIST = "card_not_exist"
     SCAN_ERROR = "scan_error"
     SYSTEM_UNAVAILABLE = "system_unavailable"
+    NETWORK_ERROR = "network_error"
     READY_TO_SCAN = "ready_to_scan"
     PROCESSING_SCAN = "processing_scan"
     DEBOUNCED = "debounced"
@@ -330,6 +331,15 @@ def provide_feedback(state: FeedbackState, message: str = "") -> None:
         _display_text(["✗ System", "  Unavailable"])
         LOG.error("Feedback: System Unavailable - %s", message)
         _schedule_led_and_oled_clear(8.0)  # Auto-clear LED and OLED after 8 seconds
+
+    elif state == FeedbackState.NETWORK_ERROR:
+        # Red LED (solid), warning beeps, display network error
+        # This state persists until network is restored
+        _set_rgb_color(1, 0, 0)  # Red
+        _play_beep_pattern([(700, 0.2), (700, 0.2)])  # Double warning beep
+        _display_text(["✗ Network Error", "Checking", "connection..."])
+        LOG.error("Feedback: Network Error - %s", message)
+        # Don't auto-clear for network errors - they persist until resolved
 
     elif state == FeedbackState.READY_TO_SCAN:
         # Cyan LED (waiting state), no beep, display ready message

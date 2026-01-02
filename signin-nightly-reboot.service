@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly Reboot Service for Sign-in Scanner
+Documentation=https://github.com/TAP-lab/signin-scanner
+
+[Service]
+Type=oneshot
+# Log before rebooting
+ExecStart=/bin/sh -c 'logger "Sign-in scanner: Performing scheduled nightly reboot"'
+# Reboot the system
+ExecStart=/sbin/reboot

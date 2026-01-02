@@ -53,10 +53,26 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
+# Install nightly reboot timer
+echo "Installing nightly reboot timer..."
+if [[ -f "$INSTALL_DIR/signin-nightly-reboot.timer" ]] && [[ -f "$INSTALL_DIR/signin-nightly-reboot.service" ]]; then
+  cp "$INSTALL_DIR/signin-nightly-reboot.timer" /etc/systemd/system/
+  cp "$INSTALL_DIR/signin-nightly-reboot.service" /etc/systemd/system/
+  echo "  ✓ Nightly reboot timer installed (runs at 1:00 AM daily)"
+else
+  echo "  ⚠ Nightly reboot timer files not found in $INSTALL_DIR"
+fi
+
 # Enable and start the service
 echo "Enabling service for boot..."
 systemctl daemon-reload
 systemctl enable $SERVICE_NAME
+
+# Enable nightly reboot timer
+if [[ -f /etc/systemd/system/signin-nightly-reboot.timer ]]; then
+  systemctl enable signin-nightly-reboot.timer
+  echo "  ✓ Nightly reboot timer enabled"
+fi
 
 echo ""
 echo "✓ Service configured successfully!"
@@ -68,5 +84,12 @@ echo "  sudo systemctl restart $SERVICE_NAME    # Restart the service"
 echo "  sudo systemctl status $SERVICE_NAME     # View service status"
 echo "  sudo journalctl -u $SERVICE_NAME -f     # View live logs"
 echo ""
+echo "Nightly reboot timer commands:"
+echo "  sudo systemctl start signin-nightly-reboot.timer   # Enable nightly reboot"
+echo "  sudo systemctl stop signin-nightly-reboot.timer    # Disable nightly reboot"
+echo "  sudo systemctl status signin-nightly-reboot.timer  # Check timer status"
+echo "  sudo systemctl list-timers                         # List all timers"
+echo ""
 echo "The service will automatically start on next boot."
+echo "The system will reboot daily at 1:00 AM for maintenance."
 echo ""
