@@ -96,10 +96,11 @@ class NetworkMonitor:
         for host in PING_HOSTS:
             try:
                 # Ping with 2 second timeout, single packet
+                # Subprocess timeout slightly longer than ping timeout
                 result = subprocess.run(
                     ["ping", "-c", "1", "-W", "2", host],
                     capture_output=True,
-                    timeout=3,
+                    timeout=2.5,
                 )
                 if result.returncode == 0:
                     LOG.debug("Connectivity check passed (host=%s)", host)
@@ -132,6 +133,7 @@ class NetworkMonitor:
         self._last_restart_time = now
 
         # Try multiple approaches to restart networking
+        # Note: These require appropriate sudo permissions configured
         commands = [
             ["sudo", "systemctl", "restart", "networking"],
             ["sudo", "systemctl", "restart", "NetworkManager"],
@@ -149,14 +151,28 @@ class NetworkMonitor:
                 if result.returncode == 0:
                     LOG.info("Successfully ran: %s", " ".join(cmd))
                     success = True
-                else:
-                    LOG.debug(
-                        "Command failed: %s (exit=%d)",
+                elif result.returncode == 1 and b"not be found" in result.stderr:
+                    # Service doesn't exist on this system
+                    LOG.debug("Service not available: %s", " ".join(cmd))
+                elif result.returncode == 126 or result.returncode == 127:
+                    # Permission denied or command not found
+                    LOG.warning(
+                        "Cannot execute %s: check sudo permissions (exit=%d)",
                         " ".join(cmd),
                         result.returncode,
                     )
-            except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-                LOG.debug("Could not run %s: %s", cmd, exc)
+                else:
+                    LOG.debug(
+                        "Command failed: %s (exit=%d): %s",
+                        " ".join(cmd),
+                        result.returncode,
+                        result.stderr.decode("utf-8", errors="ignore").strip()[:100],
+                    )
+            except subprocess.TimeoutExpired:
+                LOG.warning("Command timed out: %s", " ".join(cmd))
+                continue
+            except FileNotFoundError:
+                LOG.debug("Command not found: %s", cmd[0])
                 continue
             except Exception as exc:
                 LOG.warning("Error running %s: %s", cmd, exc)
@@ -165,7 +181,10 @@ class NetworkMonitor:
         if success:
             LOG.info("Network service restart attempted")
         else:
-            LOG.warning("No network services could be restarted")
+            LOG.warning(
+                "No network services could be restarted. "
+                "Ensure sudo permissions are configured for this user."
+            )
 
         return True
 

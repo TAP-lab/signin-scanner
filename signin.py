@@ -96,6 +96,14 @@ _network_monitor: Optional["NetworkMonitor"] = None
 _network_error_displayed: bool = False
 
 
+def _should_show_ready_feedback() -> bool:
+    """Check if ready feedback should be shown.
+    
+    Returns False if network error is currently displayed.
+    """
+    return _HAS_HARDWARE_FEEDBACK and not _network_error_displayed
+
+
 def _on_network_connection_lost() -> None:
     """Callback when network connection is lost."""
     global _network_error_displayed
@@ -726,7 +734,7 @@ if __name__ == "__main__":
             if args.rfid:
                 if not waiting_logged:
                     LOG.info("Waiting for RFID card...")
-                    if _HAS_HARDWARE_FEEDBACK and not _network_error_displayed:
+                    if _should_show_ready_feedback():
                         provide_feedback(FeedbackState.READY_TO_SCAN)
                     waiting_logged = True
                 status, _ = rfid_entry()
@@ -739,7 +747,7 @@ if __name__ == "__main__":
                 time.sleep(0.1)
             elif args.terminal:
                 if not waiting_logged:
-                    if _HAS_HARDWARE_FEEDBACK and not _network_error_displayed:
+                    if _should_show_ready_feedback():
                         provide_feedback(FeedbackState.READY_TO_SCAN)
                     waiting_logged = True
                 terminal_entry()

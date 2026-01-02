@@ -98,6 +98,14 @@ The system includes automatic network monitoring to ensure reliable operation:
 - **Restart Cooldown**: Network restart attempts are rate-limited to once every 5 minutes to prevent excessive restarts
 - **Connection Restoration**: When connectivity is restored, the system automatically returns to normal operation
 
+> **Note:** For automatic network service restart to work, the service user needs sudo permissions. Add the following to `/etc/sudoers.d/signin-scanner`:
+> ```
+> signin ALL=(ALL) NOPASSWD: /bin/systemctl restart networking
+> signin ALL=(ALL) NOPASSWD: /bin/systemctl restart NetworkManager
+> signin ALL=(ALL) NOPASSWD: /bin/systemctl restart dhcpcd
+> ```
+> Replace `signin` with your actual service user if different.
+
 ### Nightly Reboot
 To maintain system reliability, a scheduled reboot occurs at 1:00 AM daily:
 - Helps clear memory leaks and reset system state
