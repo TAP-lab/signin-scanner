@@ -117,7 +117,7 @@ def _on_network_connection_restored() -> None:
     """Callback when network connection is restored."""
     global _network_error_displayed
     LOG.info("Network connection restored - returning to ready state")
-    if _HAS_HARDWARE_FEEDBACK and _network_error_displayed:
+    if _HAS_HARDWARE_FEEDBACK:
         provide_feedback(FeedbackState.READY_TO_SCAN)
     _network_error_displayed = False
 
