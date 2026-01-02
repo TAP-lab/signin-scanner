@@ -142,8 +142,8 @@ class NetworkMonitor:
         # Note: These require appropriate sudo permissions configured
         commands = [
             # Try bringing wlan0 interface down and up
-            ["sudo", "ifconfig", "wlan0", "down"],
-            ["sudo", "ifconfig", "wlan0", "up"],
+            ["sudo", "ip", "link", "set", "wlan0", "down"],
+            ["sudo", "ip", "link", "set", "wlan0", "up"],
             # Restart wpa_supplicant for WiFi authentication
             ["sudo", "systemctl", "restart", "wpa_supplicant"],
             # Restart networking service

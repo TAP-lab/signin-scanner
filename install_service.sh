@@ -64,7 +64,7 @@ CRON_CMD="0 1 * * * /sbin/reboot"
 CRON_COMMENT="# Nightly reboot for signin-scanner at 1:00 AM"
 
 # Add cron job for root user (or specified service user)
-if ! crontab -u root -l 2>/dev/null | grep -q "/sbin/reboot"; then
+if ! crontab -u root -l 2>/dev/null | grep -q "Nightly reboot for signin-scanner"; then
   (crontab -u root -l 2>/dev/null || true; echo "$CRON_COMMENT"; echo "$CRON_CMD") | crontab -u root -
   echo "  ✓ Nightly reboot cron job installed (runs at 1:00 AM daily)"
 else

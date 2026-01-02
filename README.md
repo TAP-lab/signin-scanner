@@ -102,7 +102,7 @@ The system includes automatic network monitoring to ensure reliable operation:
 
 > **Note:** For automatic network service restart to work, the service user needs sudo permissions. Add the following to `/etc/sudoers.d/signin-scanner`:
 > ```
-> signin ALL=(ALL) NOPASSWD: /sbin/ifconfig
+> signin ALL=(ALL) NOPASSWD: /sbin/ip
 > signin ALL=(ALL) NOPASSWD: /bin/systemctl restart wpa_supplicant
 > signin ALL=(ALL) NOPASSWD: /bin/systemctl restart networking
 > signin ALL=(ALL) NOPASSWD: /bin/systemctl restart dhcpcd
