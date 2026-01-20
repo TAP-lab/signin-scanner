@@ -58,6 +58,7 @@ SIGNIN_SIGNOUT_FIELD = os.getenv("SIGNIN_SIGNOUT_FIELD", "sign_out_time__c")
 SIGNIN_WORKSHOP_FIELD = os.getenv("SIGNIN_WORKSHOP_FIELD", "Workshop_Name__c")
 SIGNIN_NAME_FIELD = os.getenv("SIGNIN_NAME_FIELD", "Name__c")
 SIGNIN_RECORDTYPE_ID = os.getenv("SIGNIN_RECORDTYPE_ID", "")
+SIGNIN_FACILITATOR_FIELD = os.getenv("SIGNIN_FACILITATOR_FIELD", "signin_is_facilitator__c")
 
 WORKSHOP_SOBJECT = os.getenv("WORKSHOP_SOBJECT", "TAP_lab_Workshop__c")
 WORKSHOP_NAME_FIELD = os.getenv("WORKSHOP_NAME_FIELD", "Name")
@@ -374,7 +375,9 @@ def sf_sign_out_signins_by_id(
 
     try:
         for record_id in ids_list:
-            sobject.update(record_id, {SIGNIN_SIGNOUT_FIELD: time_val})
+            # When signing out, ensure the facilitator flag is cleared (falsey)
+            payload = {SIGNIN_SIGNOUT_FIELD: time_val, SIGNIN_FACILITATOR_FIELD: False}
+            sobject.update(record_id, payload)
     except Exception as exc:
         LOG.exception("Failed to update sign-out: %s", exc)
         return 500, f"salesforce_error: {exc}"
