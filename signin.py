@@ -29,7 +29,7 @@ except Exception:
 
 # Import hardware feedback module
 try:
-    from feedback_hardware import FeedbackState, provide_feedback, shutdown_hardware, set_button_callback
+    from feedback_hardware import FeedbackState, provide_feedback, shutdown_hardware
 
     _HAS_HARDWARE_FEEDBACK = True
 except ImportError:
@@ -92,9 +92,6 @@ sf: Optional["Salesforce"] = None
 _LAST_CARD_SERIAL: Optional[str] = None
 _LAST_CARD_SEEN: float = 0.0
 
-# Facilitator mode tracking
-_facilitator_mode: bool = False
-
 # Network monitor instance
 _network_monitor: Optional["NetworkMonitor"] = None
 _network_error_displayed: bool = False
@@ -124,21 +121,6 @@ def _on_network_connection_restored() -> None:
     if _HAS_HARDWARE_FEEDBACK:
         provide_feedback(FeedbackState.READY_TO_SCAN)
     _network_error_displayed = False
-
-
-def _on_button_pressed() -> None:
-    """Callback when button is pressed to toggle facilitator mode."""
-    global _facilitator_mode
-    _facilitator_mode = not _facilitator_mode
-    
-    if _facilitator_mode:
-        LOG.info("Facilitator mode activated")
-        if _HAS_HARDWARE_FEEDBACK:
-            provide_feedback(FeedbackState.FACILITATOR_MODE)
-    else:
-        LOG.info("Facilitator mode deactivated")
-        if _HAS_HARDWARE_FEEDBACK:
-            provide_feedback(FeedbackState.READY_TO_SCAN)
 
 
 def _escape_soql(value: str) -> str:
@@ -490,7 +472,7 @@ def sf_get_current_workshop(now: Optional[datetime.datetime] = None) -> str:
 
 
 def sf_create_signin_for_contact(
-    contact_id: str, time_to_signin: Union[None, str, datetime.datetime] = None, is_facilitator: bool = False
+    contact_id: str, time_to_signin: Union[None, str, datetime.datetime] = None
 ) -> Tuple[int, Any]:
     if not contact_id:
         return 400, "invalid_contact_id"
@@ -527,11 +509,6 @@ def sf_create_signin_for_contact(
     }
     if SIGNIN_RECORDTYPE_ID:
         payload["RecordTypeId"] = SIGNIN_RECORDTYPE_ID
-    
-    # Set facilitator fields if this is a facilitator sign-in
-    if is_facilitator:
-        payload["signin_is_facilitator__c"] = True
-        payload["signin_was_favilitator__c"] = True
 
     try:
         result = sobject.create(payload)
@@ -546,8 +523,6 @@ def process_signin_from_card_serial(
     card_serial: str, now: Optional[datetime.datetime] = None
 ) -> Tuple[int, Any]:
     """Main processing flow for a card serial: sign out open signins or create a new signin."""
-    global _facilitator_mode
-    
     if not card_serial:
         return 400, "invalid_serial"
 
@@ -567,8 +542,6 @@ def process_signin_from_card_serial(
         if ids:
             signout_status, signout_msg = sf_sign_out_signins_by_id(ids, now)
             if signout_status == 200:
-                # Reset facilitator mode after any card scan
-                _facilitator_mode = False
                 return 200, "successfully_signed_out"
             return signout_status, signout_msg
     elif open_status != 404:
@@ -576,13 +549,7 @@ def process_signin_from_card_serial(
         return open_status, open_signins
 
     # No open sign-ins found, create a new one
-    # Use current facilitator mode state
-    is_facilitator = _facilitator_mode
-    create_status, create_result = sf_create_signin_for_contact(contact_id, now, is_facilitator)
-    
-    # Reset facilitator mode after sign-in
-    _facilitator_mode = False
-    
+    create_status, create_result = sf_create_signin_for_contact(contact_id, now)
     return create_status, create_result
 
 
@@ -761,10 +728,6 @@ if __name__ == "__main__":
         LOG.info("Network monitoring enabled")
     else:
         LOG.warning("Network monitoring not available")
-
-    # Register button callback for facilitator mode
-    if _HAS_HARDWARE_FEEDBACK:
-        set_button_callback(_on_button_pressed)
 
     waiting_logged = False
 
