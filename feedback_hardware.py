@@ -28,15 +28,14 @@ _led_clear_timer: Optional[threading.Timer] = None
 # Hardware instances
 _rgb_led: Optional[Any] = None
 _piezo: Optional[Any] = None
-_button: Optional[Any] = None
 _oled: Optional[Any] = None
 _draw: Optional[Any] = None
 _font: Optional[Any] = None
 _image: Optional[Any] = None
 
-# Try to import GPIO libraries (gpiozero for RGB LED, piezo, and button)
+# Try to import GPIO libraries (gpiozero for RGB LED and piezo)
 try:
-    from gpiozero import RGBLED, TonalBuzzer, Button
+    from gpiozero import RGBLED, TonalBuzzer
     from gpiozero.tones import Tone
 
     _HAS_GPIO = True
@@ -67,7 +66,6 @@ class FeedbackState(Enum):
     READY_TO_SCAN = "ready_to_scan"
     PROCESSING_SCAN = "processing_scan"
     DEBOUNCED = "debounced"
-    FACILITATOR_MODE = "facilitator_mode"
 
 
 # Default GPIO pins (BCM numbering)
@@ -75,7 +73,6 @@ RGB_LED_RED_PIN = 17
 RGB_LED_GREEN_PIN = 27
 RGB_LED_BLUE_PIN = 22
 PIEZO_PIN = 23
-BUTTON_PIN = 24
 
 # OLED display dimensions
 OLED_WIDTH = 128
@@ -84,7 +81,7 @@ OLED_HEIGHT = 128
 
 def _initialize_hardware() -> None:
     """Initialize hardware components if available (only runs once)."""
-    global _rgb_led, _piezo, _button, _oled, _draw, _font, _image, _hardware_initialized
+    global _rgb_led, _piezo, _oled, _draw, _font, _image, _hardware_initialized
 
     # Skip if already initialized
     if _hardware_initialized:
@@ -116,15 +113,6 @@ def _initialize_hardware() -> None:
         except Exception as exc:
             LOG.warning("Failed to initialize piezo buzzer: %s", exc)
             _piezo = None
-
-    # Initialize button
-    if _HAS_GPIO and _button is None:
-        try:
-            _button = Button(BUTTON_PIN, pull_up=True, bounce_time=0.1)
-            LOG.info("Button initialized on pin %d", BUTTON_PIN)
-        except Exception as exc:
-            LOG.warning("Failed to initialize button: %s", exc)
-            _button = None
 
     # Initialize OLED display
     if _HAS_OLED and _oled is None:
@@ -384,13 +372,6 @@ def provide_feedback(state: FeedbackState, message: str = "") -> None:
             except Exception as exc:
                 LOG.warning("Failed to turn off LED after debounce: %s", exc)
 
-    elif state == FeedbackState.FACILITATOR_MODE:
-        # Magenta LED (facilitator mode), brief beep, display facilitator message
-        _set_rgb_color(1, 0, 1)  # Magenta
-        _play_beep_pattern([(900, 0.1)])  # Quick acknowledgment beep
-        _display_text(["Facilitator", "Sign In", "Scan card now"])
-        LOG.info("Feedback: Facilitator Mode")
-
 
 def clear_feedback() -> None:
     """Clear all feedback (turn off LED, clear display)."""
@@ -410,27 +391,9 @@ def clear_feedback() -> None:
             LOG.warning("Failed to clear OLED: %s", exc)
 
 
-def set_button_callback(callback) -> None:
-    """Set the callback function to be called when button is pressed.
-    
-    Args:
-        callback: Function to call when button is pressed (no arguments)
-    """
-    _initialize_hardware()
-    
-    if _button is not None:
-        try:
-            _button.when_pressed = callback
-            LOG.info("Button callback registered")
-        except Exception as exc:
-            LOG.warning("Failed to set button callback: %s", exc)
-    else:
-        LOG.debug("Button not available - callback not registered")
-
-
 def shutdown_hardware() -> None:
     """Shutdown and cleanup hardware resources."""
-    global _rgb_led, _piezo, _button, _oled, _led_clear_timer
+    global _rgb_led, _piezo, _oled, _led_clear_timer
 
     # Cancel any pending LED clear timer
     if _led_clear_timer is not None:
@@ -452,13 +415,6 @@ def shutdown_hardware() -> None:
         except Exception as exc:
             LOG.warning("Failed to close piezo buzzer: %s", exc)
         _piezo = None
-
-    if _button is not None:
-        try:
-            _button.close()
-        except Exception as exc:
-            LOG.warning("Failed to close button: %s", exc)
-        _button = None
 
     _oled = None
 

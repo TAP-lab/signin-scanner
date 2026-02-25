@@ -7,10 +7,6 @@ A Raspberry Pi sign-in processor that reads RFID cards or terminal input to crea
 - Salesforce-backed lookups and record creation
 - Continuous operation mode with RFID debounce
 - Systemd service install script for autonomous operation
-- **Facilitator sign-in mode via button press**
-  - Press button to activate facilitator mode for next card scan
-  - Sign-ins marked as facilitator in Salesforce
-  - Mode automatically resets after each scan
 - **User feedback loop with RGB LED, passive piezo buzzer, and OLED display**
   - Visual feedback via RGB LED (different colors for different states)
   - Audio feedback via passive piezo buzzer (different beep patterns)
@@ -26,7 +22,6 @@ A Raspberry Pi sign-in processor that reads RFID cards or terminal input to crea
   - MFRC522 RFID reader (for card scanning)
   - RGB LED (common cathode) with resistors
   - Passive piezo buzzer
-  - Push button (for facilitator mode toggle)
   - 128x128 monochrome OLED display (I2C, SSD1306)
 
 ## Setup
@@ -66,7 +61,6 @@ chmod +x install_service.sh
 - **MFRC522 RFID (SPI)**: 3.3V, GND, SDA→GPIO8 (CE0), SCK→GPIO11, MOSI→GPIO10, MISO→GPIO9, RST→GPIO25
 - **RGB LED**: Red→GPIO17, Green→GPIO27, Blue→GPIO22, Common Cathode→GND (use 220Ω resistors)
 - **Piezo Buzzer**: Positive→GPIO23, Negative→GND
-- **Button**: One terminal→GPIO24, Other terminal→GND (internal pull-up enabled)
 - **OLED Display (I2C)**: VCC→3.3V/5V, GND, SDA→GPIO2, SCL→GPIO3
 - Enable **SPI and I2C** on the Pi via `raspi-config` (Interface Options)
 - See `wiring.md` for detailed pin mappings and configuration
@@ -82,7 +76,6 @@ The system provides visual (LED), audio (buzzer), and display (OLED) feedback fo
 | State | LED Color | Audio | Display Message |
 |-------|-----------|-------|-----------------|
 | **Ready to Scan** | Cyan | None | "Please scan your card" |
-| **Facilitator Mode** | Magenta | Quick beep | "Facilitator Sign In" |
 | **Processing Scan** | Yellow | Quick beep | "Processing..." |
 | **Signed In** | Green (3s) | Rising beep | "✓ Signed In - Welcome!" |
 | **Signed Out** | Blue (3s) | Falling beep | "✓ Signed Out - Goodbye!" |
@@ -95,16 +88,6 @@ The system provides visual (LED), audio (buzzer), and display (OLED) feedback fo
 > **Note:** Display messages shown above are simplified for readability. On the actual OLED, messages are rendered across multiple lines. For example, **Signed In** displays as `"✓ Signed In"` on line 1, a blank line, then `"Welcome!"` on line 3.
 
 The feedback system gracefully degrades when hardware is not available (e.g., on non-Pi systems or during development). For result states (signed in/out, errors), the LED automatically turns off after 3 seconds to avoid confusion. The debounced state provides a brief 0.1s yellow blink to acknowledge card detection without disrupting the user flow.
-
-## Facilitator Sign-In Mode
-The system includes a button to mark sign-ins as facilitator sign-ins:
-
-1. **Press the button** when the system shows "Ready to Scan" - the display changes to "Facilitator Sign In" with a magenta LED
-2. **Scan a card** - the sign-in will be created with facilitator flags (`signin_is_facilitator__c` and `signin_was_favilitator__c`) set to true in Salesforce
-3. **Automatic reset** - after any card scan (sign-in or sign-out), the system returns to normal mode
-4. **Toggle off** - pressing the button again while in facilitator mode returns immediately to normal mode
-
-This feature is useful for tracking when staff/facilitators sign in versus regular participants.
 
 ## Network Monitoring and Recovery
 The system includes automatic network monitoring to ensure reliable operation:
