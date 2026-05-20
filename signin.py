@@ -186,48 +186,12 @@ def connect_to_salesforce(
     if sf is not None:
         return sf
 
-    # Try JWT Bearer Flow first (REST API only, no SOAP)
-    consumer_key = consumer_key or os.getenv("SF_CONSUMER_KEY")
-    private_key_path = private_key_path or os.getenv("SF_PRIVATE_KEY_PATH")
-    domain = domain or os.getenv("SF_DOMAIN", "test")
-    username = username or os.getenv("SF_USERNAME")
-
-    if consumer_key and private_key_path and username:
-        try:
-            if not os.path.isfile(private_key_path):
-                LOG.error(f"Private key file not found: {private_key_path}")
-                return None
-
-            with open(private_key_path, "r") as f:
-                private_key = f.read()
-
-            # Use JWT Bearer Flow with simple_salesforce
-            # The 'jwt_bearer_token' parameter tells it to use JWT instead of password/OAuth
-            sf = _SF(
-                username=username,
-                consumer_key=consumer_key,
-                privatekey=private_key,
-                domain=domain,
-                jwt_bearer_token=True,  # Enable JWT Bearer Flow
-            )  # type: ignore[arg-type]
-            LOG.info("Connected to Salesforce using JWT Bearer Flow (REST API)")
-            return sf
-        except Exception as exc:  # pragma: no cover - runtime
-            LOG.exception("Failed to connect to Salesforce with JWT: %s", exc)
-            sf = None
-            return None
-
-    # Fallback to password authentication (uses SOAP Partner API - deprecated)
     username = username or os.getenv("SF_USERNAME")
     password = password or os.getenv("SF_PASSWORD")
     security_token = security_token or os.getenv("SF_SECURITY_TOKEN")
 
-    if username and password:
-        LOG.warning(
-            "Using password authentication which relies on SOAP Partner API. "
-            "Consider migrating to JWT Bearer Flow for REST API only."
-        )
-        try:
+    try:
+        if username and password:
             sf = _SF(username=username, password=password, security_token=security_token or "", domain=domain)  # type: ignore[arg-type]
             LOG.info("Connected to Salesforce using password (legacy - SOAP Partner API)")
             return sf
