@@ -70,10 +70,123 @@ chmod +x install_service.sh
 - Enable **SPI and I2C** on the Pi via `raspi-config` (Interface Options)
 - See `wiring.md` for detailed pin mappings and configuration
 
+## Salesforce Setup
+
+### Authentication: JWT Bearer Flow (Recommended)
+This system uses **JWT Bearer Flow** (OAuth 2.0) to authenticate with Salesforce via REST API only—no SOAP Partner API.
+
+#### Step 1: Create a Self-Signed Certificate
+Generate a certificate and private key on your local machine:
+
+```bash
+# Generate private key (2048-bit RSA)
+openssl genrsa -out server.key 2048
+
+# Generate self-signed certificate (valid for 10 years)
+openssl req -new -x509 -key server.key -out server.crt -days 3650 \
+  -subj "/CN=SignInSystem/O=TAP Lab/C=US"
+
+# View the certificate details to verify
+openssl x509 -in server.crt -text -noout
+```
+
+Store `server.key` securely (this is your private key). You'll upload `server.crt` to Salesforce.
+
+#### Step 2: Create a Connected App in Salesforce
+1. **Log in to Salesforce** (as an admin)
+2. Go to **Setup** → Search for **"App Manager"** → Click **"+ New"** → Select **"External Client"**
+3. Fill in the form:
+   - **Name**: `SignInSystem`
+   - **Contact Email**: Your email
+   - **Description**: `RFID sign-in system for TAP Lab MakerSpace`
+4. Continue and configure OAuth:
+   - Add OAuth Scopes:
+     - `api` (Access and manage your data)
+     - `refresh_token, offline_access` (Enable refresh token flow)
+   - ✅ **Enable JWT-based Server Flows** (this is critical)
+5. Click **Save**
+
+#### Step 3: Upload Your Certificate
+1. Open your External Client from App Manager
+2. Look for **"Certificates"** or **"Digital Certificates"** section
+3. Click **"Add Certificate"** and upload your `server.crt` file
+4. **Save**
+
+#### Step 4: Get Your Client ID
+1. In the External Client page, find the **"Client ID"** field
+2. Copy this value (you'll need it for `.env`)
+3. **Do NOT share this key**
+
+#### Step 5: Create a Service Account User (Optional but Recommended)
+For production, create a dedicated service account instead of using your personal admin account:
+
+1. **Setup** → **Users** → **New User**
+2. Fill in:
+   - **Last Name**: `SignInSystem`
+   - **Email**: `signin-system@taplab.invalid` (or similar)
+   - **Username**: `signin-system@taplab.invalid`
+   - **Profile**: Choose a profile with API access (e.g., "System Administrator" for testing)
+3. **Save**
+4. The system will email a temporary password—ignore it (you won't use password auth)
+
+#### Step 6: Authorize the Connected App
+1. Go to **Setup** → Search **OAuth Token Flow** or **Connected Apps** → **Manage Connected Apps**
+2. Find your connected app and click **Edit**
+3. Under **OAuth Scopes**, ensure you have:
+   - `api`
+   - `refresh_token, offline_access`
+4. **Save**
+
+Now you need to authorize it with your service account:
+1. As an admin, go to **Setup** → **Users** → find your service account
+2. Click **Reset Password** (generates a temporary password)
+3. In a private/incognito browser window, log in with that temporary password
+4. Change password as prompted
+5. You can now log out
+
+The Connected App is now authorized for the service account.
+
+#### Step 7: Configure .env
+1. Copy your **Client ID** from the External Client settings
+2. Specify the path to your **private key file** (`server.key`)
+3. Set the **username** to your service account email (or your admin email if testing)
+
+Create/update `.env`:
+```bash
+# Salesforce JWT Authentication
+SF_USERNAME=signin-system@taplab.invalid
+SF_CONSUMER_KEY=your-client-id-here
+SF_PRIVATE_KEY_PATH=/path/to/server.key
+SF_DOMAIN=test   # "test" for sandbox, remove or use "login" for production
+```
+
+#### Step 8: Verify It Works
+```bash
+python3 -c "from signin import connect_to_salesforce; connect_to_salesforce(); print('Connected!')"
+```
+
+You should see: `Connected to Salesforce using JWT Bearer Flow (REST API)`
+
+✅ **Success!** Your system is now using REST API only (no SOAP).
+
+### Migrating from Password Auth (Legacy)
+If you're currently using `SF_PASSWORD` and `SF_SECURITY_TOKEN`:
+
+1. **Stop the sign-in service**: `sudo systemctl stop signin`
+2. Follow the JWT setup above (Steps 1–8)
+3. Update your `.env` to remove `SF_PASSWORD` and `SF_SECURITY_TOKEN`
+4. **Restart the service**: `sudo systemctl start signin`
+5. **Verify logs**: `journalctl -u signin -f`
+
+The service will log: `Connected to Salesforce using JWT Bearer Flow (REST API)`
+
+---
+
 ## Environment variables (see .env)
-- Salesforce: `SF_USERNAME`, `SF_PASSWORD`, `SF_SECURITY_TOKEN`, `SF_DOMAIN`
-- Objects/fields: `ACCESS_CARD_*`, `SIGNIN_*`, `WORKSHOP_*`
-- RFID: `RFID_DEBOUNCE_SECONDS` (default: 1.0)
+- **Salesforce (JWT - Recommended)**: `SF_USERNAME`, `SF_CONSUMER_KEY`, `SF_PRIVATE_KEY_PATH`, `SF_DOMAIN`
+- **Salesforce (Legacy Password)**: `SF_PASSWORD`, `SF_SECURITY_TOKEN` (uses SOAP Partner API - being retired)
+- **Objects/fields**: `ACCESS_CARD_*`, `SIGNIN_*`, `WORKSHOP_*`
+- **RFID**: `RFID_DEBOUNCE_SECONDS` (default: 1.0)
 
 ## User Feedback States
 The system provides visual (LED), audio (buzzer), and display (OLED) feedback for the following states:
