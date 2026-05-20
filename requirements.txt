@@ -1,6 +1,7 @@
 # Requirements for signin.py
 simple-salesforce
 python-dotenv
+PyJWT
 # mfrc522 is Raspberry-Pi specific; install only on Linux
 mfrc522; sys_platform == "linux"
 
