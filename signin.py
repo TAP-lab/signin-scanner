@@ -188,20 +188,11 @@ def connect_to_salesforce(
             sf = _SF(username=username, password=password, security_token=security_token or "", domain=domain)  # type: ignore[arg-type]
             LOG.info("Connected to Salesforce using password (legacy - SOAP Partner API)")
             return sf
-        except Exception as exc:  # pragma: no cover - runtime
-            LOG.exception("Failed to connect to Salesforce: %s", exc)
-            sf = None
-            return None
-
-    # Allow unauthenticated creation (may work if local mocking is used)
-    try:
-        sf = _SF()  # type: ignore[misc]
-        LOG.info("Connected to Salesforce without credentials (mocking mode)")
-        return sf
     except Exception as exc:  # pragma: no cover - runtime
         LOG.exception("Failed to connect to Salesforce: %s", exc)
         sf = None
         return None
+
 
 
 def _get_sobject(sobject_name: str):
