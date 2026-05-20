@@ -58,9 +58,7 @@ SIGNIN_SIGNOUT_FIELD = os.getenv("SIGNIN_SIGNOUT_FIELD", "sign_out_time__c")
 SIGNIN_WORKSHOP_FIELD = os.getenv("SIGNIN_WORKSHOP_FIELD", "Workshop_Name__c")
 SIGNIN_NAME_FIELD = os.getenv("SIGNIN_NAME_FIELD", "Name__c")
 SIGNIN_RECORDTYPE_ID = os.getenv("SIGNIN_RECORDTYPE_ID", "")
-SIGNIN_FACILITATOR_FIELD = os.getenv(
-    "SIGNIN_FACILITATOR_FIELD", "signin_is_facilitator__c"
-)
+SIGNIN_FACILITATOR_FIELD = os.getenv("SIGNIN_FACILITATOR_FIELD", "signin_is_facilitator__c")
 
 WORKSHOP_SOBJECT = os.getenv("WORKSHOP_SOBJECT", "TAP_lab_Workshop__c")
 WORKSHOP_NAME_FIELD = os.getenv("WORKSHOP_NAME_FIELD", "Name")
@@ -101,7 +99,7 @@ _network_error_displayed: bool = False
 
 def _should_show_ready_feedback() -> bool:
     """Check if ready feedback should be shown.
-
+    
     Returns False if network error is currently displayed.
     """
     return _HAS_HARDWARE_FEEDBACK and not _network_error_displayed
@@ -121,12 +119,7 @@ def _on_network_connection_restored() -> None:
     global _network_error_displayed
     LOG.info("Network connection restored - returning to ready state")
     if _HAS_HARDWARE_FEEDBACK:
-        workshop = sf_get_current_workshop() if sf is not None else "No Event"
-        provide_feedback(
-            FeedbackState.READY_TO_SCAN,
-            workshop=workshop,
-            workshop_callback=sf_get_current_workshop,
-        )
+        provide_feedback(FeedbackState.READY_TO_SCAN)
     _network_error_displayed = False
 
 
@@ -756,12 +749,7 @@ if __name__ == "__main__":
                 if not waiting_logged:
                     LOG.info("Waiting for RFID card...")
                     if _should_show_ready_feedback():
-                        workshop = sf_get_current_workshop()
-                        provide_feedback(
-                            FeedbackState.READY_TO_SCAN,
-                            workshop=workshop,
-                            workshop_callback=sf_get_current_workshop,
-                        )
+                        provide_feedback(FeedbackState.READY_TO_SCAN)
                     waiting_logged = True
                 status, _ = rfid_entry()
                 if status in (200, 201):
@@ -774,12 +762,7 @@ if __name__ == "__main__":
             elif args.terminal:
                 if not waiting_logged:
                     if _should_show_ready_feedback():
-                        workshop = sf_get_current_workshop()
-                        provide_feedback(
-                            FeedbackState.READY_TO_SCAN,
-                            workshop=workshop,
-                            workshop_callback=sf_get_current_workshop,
-                        )
+                        provide_feedback(FeedbackState.READY_TO_SCAN)
                     waiting_logged = True
                 terminal_entry()
                 time.sleep(6.0)  # Wait before showing ready screen again

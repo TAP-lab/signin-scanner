@@ -25,11 +25,6 @@ _hardware_initialized = False
 # LED auto-clear timer
 _led_clear_timer: Optional[threading.Timer] = None
 
-# Workshop refresh timer (30-minute refresh for ready state)
-_workshop_refresh_timer: Optional[threading.Timer] = None
-_workshop_refresh_callback: Optional[Any] = None
-_current_workshop: str = ""
-
 # Hardware instances
 _rgb_led: Optional[Any] = None
 _piezo: Optional[Any] = None
@@ -82,33 +77,6 @@ PIEZO_PIN = 23
 # OLED display dimensions
 OLED_WIDTH = 128
 OLED_HEIGHT = 128
-
-
-def _check_fonts_available() -> bool:
-    """Check if required fonts are available on the system.
-
-    Returns True if at least one TrueType font is found, False otherwise.
-    Logs warnings if fonts are missing.
-    """
-    font_paths = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-    ]
-
-    for font_path in font_paths:
-        try:
-            with open(font_path, "r"):
-                return True
-        except (FileNotFoundError, IOError):
-            continue
-
-    LOG.warning(
-        "No TrueType fonts found in standard locations. "
-        "OLED display will use default font (limited text rendering). "
-        "Install fonts with: sudo apt-get install fonts-dejavu fonts-liberation fonts-freefont-ttf"
-    )
-    return False
 
 
 def _initialize_hardware() -> None:
@@ -168,18 +136,12 @@ def _initialize_hardware() -> None:
             for font_path in font_paths:
                 try:
                     _font = ImageFont.truetype(font_path, 12)
-                    LOG.debug("Loaded font: %s", font_path)
                     break
                 except Exception:
                     continue
 
             if _font is None:
                 _font = ImageFont.load_default()
-                LOG.warning(
-                    "Using default font for OLED display. "
-                    "For better text rendering, install TrueType fonts: "
-                    "sudo apt-get install fonts-dejavu fonts-liberation fonts-freefont-ttf"
-                )
 
             LOG.info("OLED display initialized (%dx%d)", OLED_WIDTH, OLED_HEIGHT)
         except Exception as exc:
@@ -303,73 +265,12 @@ def _schedule_led_and_oled_clear(delay_seconds: float = 3.0) -> None:
     _led_clear_timer.start()
 
 
-def _schedule_workshop_refresh(interval_seconds: float = 1800.0) -> None:
-    """Schedule workshop refresh every 30 minutes (1800 seconds).
-
-    This only runs while in READY_TO_SCAN state. It periodically refreshes
-    the workshop display to catch workshop changes throughout the day.
-
-    Args:
-        interval_seconds: Interval between refreshes in seconds (default 1800 = 30 min)
-    """
-    global _workshop_refresh_timer
-
-    # Cancel any existing timer
-    if _workshop_refresh_timer is not None:
-        _workshop_refresh_timer.cancel()
-        _workshop_refresh_timer = None
-
-    def _refresh_workshop():
-        """Refresh the workshop display."""
-        global _workshop_refresh_timer
-        if _workshop_refresh_callback is not None:
-            try:
-                new_workshop = _workshop_refresh_callback()
-                # Update display with refreshed workshop
-                if _oled is not None and _draw is not None and _image is not None:
-                    try:
-                        _draw.rectangle(
-                            (0, 0, _oled.width, _oled.height), outline=0, fill=0
-                        )
-                        if new_workshop:
-                            _display_text(["Sign in to", new_workshop])
-                        else:
-                            _display_text(
-                                [
-                                    "Welcome!",
-                                    "Scan your card",
-                                    "to sign in or out",
-                                ]
-                            )
-                        LOG.debug("Workshop refreshed: %s", new_workshop or "(none)")
-                    except Exception as exc:
-                        LOG.debug("Failed to refresh workshop display: %s", exc)
-            except Exception as exc:
-                LOG.debug("Failed to refresh workshop: %s", exc)
-        # Reschedule the timer
-        _workshop_refresh_timer = threading.Timer(interval_seconds, _refresh_workshop)
-        _workshop_refresh_timer.daemon = True
-        _workshop_refresh_timer.start()
-
-    _workshop_refresh_timer = threading.Timer(interval_seconds, _refresh_workshop)
-    _workshop_refresh_timer.daemon = True
-    _workshop_refresh_timer.start()
-
-
-def provide_feedback(
-    state: FeedbackState,
-    message: str = "",
-    workshop: str = "",
-    workshop_callback: Optional[Any] = None,
-) -> None:
+def provide_feedback(state: FeedbackState, message: str = "") -> None:
     """Provide hardware feedback for a given state.
 
     Args:
         state: The feedback state to display
         message: Optional additional message text
-        workshop: Optional workshop/event name to display on ready screen
-        workshop_callback: Optional callable to refresh workshop name every 30 minutes.
-                          Should return the current workshop name as a string.
 
     Note: For result states (signed in/out, errors), the LED automatically
     turns off after 3 seconds. For persistent states (ready, processing),
@@ -378,17 +279,10 @@ def provide_feedback(
     _initialize_hardware()
 
     # Cancel any pending LED clear timer when showing new feedback
-    global _led_clear_timer, _workshop_refresh_timer, _workshop_refresh_callback, _current_workshop
+    global _led_clear_timer
     if _led_clear_timer is not None:
         _led_clear_timer.cancel()
         _led_clear_timer = None
-
-    # Cancel workshop refresh timer if leaving READY_TO_SCAN state
-    if state != FeedbackState.READY_TO_SCAN:
-        if _workshop_refresh_timer is not None:
-            _workshop_refresh_timer.cancel()
-            _workshop_refresh_timer = None
-        _workshop_refresh_callback = None
 
     if state == FeedbackState.SIGNED_IN:
         # Green LED, success beep, display "Signed In"
@@ -456,19 +350,8 @@ def provide_feedback(
             except Exception as exc:
                 LOG.warning("Failed to turn off LED: %s", exc)
         _set_rgb_color(0, 1, 1)  # Cyan
-        # Display workshop name if provided, otherwise show generic message
-        if workshop:
-            _display_text(["Sign in to", workshop])
-            _current_workshop = workshop
-        else:
-            _display_text(["Welcome!", "Scan your card", "to sign in or out"])
-            _current_workshop = ""
-        LOG.info("Feedback: Ready to Scan - Workshop: %s", workshop or "(none)")
-
-        # Schedule workshop refresh every 30 minutes if callback provided
-        if workshop_callback is not None:
-            _workshop_refresh_callback = workshop_callback
-            _schedule_workshop_refresh()
+        _display_text(["Welcome!", "Scan your card", "to sign in or out"])
+        LOG.info("Feedback: Ready to Scan")
 
     elif state == FeedbackState.PROCESSING_SCAN:
         # Yellow LED (processing), brief beep, display processing

@@ -18,9 +18,6 @@ A Raspberry Pi sign-in processor that reads RFID cards or terminal input to crea
 - Python 3.9+
 - Salesforce credentials with API access
 - Network connectivity to Salesforce
-- **TrueType fonts** (for OLED text rendering):
-  - DejaVu, Liberation, or FreeFonts packages (see Setup section)
-  - Without fonts, OLED display falls back to limited default font
 - Hardware (optional, system works without hardware feedback):
   - MFRC522 RFID reader (for card scanning)
   - RGB LED (common cathode) with resistors
@@ -30,14 +27,12 @@ A Raspberry Pi sign-in processor that reads RFID cards or terminal input to crea
 ## Setup
 1) Clone/copy this folder to the Pi
 2) Create and fill `.env` (template present in repo)
-3) Install system dependencies:
+3) Install system deps on Pi (if missing):
    ```bash
-   chmod +x install_dependencies.sh
-   ./install_dependencies.sh
+   sudo apt-get update
+   sudo apt-get install -y python3-venv python3-pip
    ```
-   This installs Python tools, I2C/SPI utilities, and **required fonts for OLED display**.
-   
-4) Install Python dependencies:
+4) Install Python deps:
    ```bash
    python3 -m venv .venv
    . .venv/bin/activate
