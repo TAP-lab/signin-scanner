@@ -166,8 +166,13 @@ def connect_to_salesforce(
     password: Optional[str] = None,
     security_token: Optional[str] = None,
     domain: Optional[str] = None,
+    consumer_key: Optional[str] = None,
+    private_key_path: Optional[str] = None,
 ) -> Optional["Salesforce"]:
-    """Connect to Salesforce using provided credentials or environment.
+    """Connect to Salesforce using JWT Bearer Flow (OAuth 2.0) or legacy password auth.
+
+    Prefers JWT if consumer_key and private_key_path are provided (recommended - REST API only).
+    Falls back to username/password (uses SOAP Partner API for login - deprecated).
 
     Returns a `simple_salesforce.Salesforce` instance or `None` on failure.
     """
@@ -181,18 +186,56 @@ def connect_to_salesforce(
     if sf is not None:
         return sf
 
+    # Try JWT Bearer Flow first (REST API only, no SOAP)
+    consumer_key = consumer_key or os.getenv("SF_CONSUMER_KEY")
+    private_key_path = private_key_path or os.getenv("SF_PRIVATE_KEY_PATH")
+    domain = domain or os.getenv("SF_DOMAIN", "test")
+
+    if consumer_key and private_key_path:
+        try:
+            if not os.path.isfile(private_key_path):
+                LOG.error(f"Private key file not found: {private_key_path}")
+                return None
+
+            with open(private_key_path, "r") as f:
+                private_key = f.read()
+
+            sf = _SF(
+                username=os.getenv("SF_USERNAME") or "service-account",
+                consumer_key=consumer_key,
+                private_key=private_key,
+                domain=domain,
+            )  # type: ignore[arg-type]
+            LOG.info("Connected to Salesforce using JWT Bearer Flow (REST API)")
+            return sf
+        except Exception as exc:  # pragma: no cover - runtime
+            LOG.exception("Failed to connect to Salesforce with JWT: %s", exc)
+            sf = None
+            return None
+
+    # Fallback to password authentication (uses SOAP Partner API - deprecated)
     username = username or os.getenv("SF_USERNAME")
     password = password or os.getenv("SF_PASSWORD")
     security_token = security_token or os.getenv("SF_SECURITY_TOKEN")
-    domain = domain or os.getenv("SF_DOMAIN")
 
-    try:
-        if username and password:
+    if username and password:
+        LOG.warning(
+            "Using password authentication which relies on SOAP Partner API. "
+            "Consider migrating to JWT Bearer Flow for REST API only."
+        )
+        try:
             sf = _SF(username=username, password=password, security_token=security_token or "", domain=domain)  # type: ignore[arg-type]
-        else:
-            # Allow unauthenticated creation (may work if local mocking is used)
-            sf = _SF()  # type: ignore[misc]
-        LOG.info("Connected to Salesforce")
+            LOG.info("Connected to Salesforce using password (legacy - SOAP Partner API)")
+            return sf
+        except Exception as exc:  # pragma: no cover - runtime
+            LOG.exception("Failed to connect to Salesforce: %s", exc)
+            sf = None
+            return None
+
+    # Allow unauthenticated creation (may work if local mocking is used)
+    try:
+        sf = _SF()  # type: ignore[misc]
+        LOG.info("Connected to Salesforce without credentials (mocking mode)")
         return sf
     except Exception as exc:  # pragma: no cover - runtime
         LOG.exception("Failed to connect to Salesforce: %s", exc)
