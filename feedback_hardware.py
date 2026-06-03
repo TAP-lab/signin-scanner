@@ -151,7 +151,11 @@ def _initialize_hardware() -> None:
             LOG.warning("Failed to initialize piezo buzzer: %s", exc)
             _piezo = None
 
-    if _HAS_GPIO and _facilitator_button is None and _facilitator_button_callback is not None:
+    if (
+        _HAS_GPIO
+        and _facilitator_button is None
+        and _facilitator_button_callback is not None
+    ):
         try:
             _facilitator_button = Button(
                 FACILITATOR_BUTTON_PIN, pull_up=True, bounce_time=0.2
