@@ -112,7 +112,7 @@ _network_error_displayed: bool = False
 
 def _should_show_ready_feedback() -> bool:
     """Check if ready feedback should be shown.
-    
+
     Returns False if network error is currently displayed.
     """
     return _HAS_HARDWARE_FEEDBACK and not _network_error_displayed
@@ -246,13 +246,14 @@ def connect_to_salesforce(
     try:
         if username and password:
             sf = _SF(username=username, password=password, security_token=security_token or "", domain=domain)  # type: ignore[arg-type]
-            LOG.info("Connected to Salesforce using password (legacy - SOAP Partner API)")
+            LOG.info(
+                "Connected to Salesforce using password (legacy - SOAP Partner API)"
+            )
             return sf
     except Exception as exc:  # pragma: no cover - runtime
         LOG.exception("Failed to connect to Salesforce: %s", exc)
         sf = None
         return None
-
 
 
 def _get_sobject(sobject_name: str):
