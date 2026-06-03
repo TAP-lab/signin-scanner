@@ -112,7 +112,7 @@ _network_error_displayed: bool = False
 
 def _should_show_ready_feedback() -> bool:
     """Check if ready feedback should be shown.
-    
+
     Returns False if network error is currently displayed.
     """
     return _HAS_HARDWARE_FEEDBACK and not _network_error_displayed
@@ -160,6 +160,27 @@ def arm_next_signin_as_facilitator() -> None:
     LOG.info("Next sign-in armed as facilitator")
     if _HAS_HARDWARE_FEEDBACK:
         provide_feedback(FeedbackState.FACILITATOR_SIGNIN)
+
+
+def toggle_next_signin_as_facilitator() -> None:
+    """Toggle facilitator mode for the next created sign-in.
+
+    If facilitator mode is currently armed, disarm it and return to the
+    normal ready feedback. Otherwise arm facilitator mode and show the
+    facilitator feedback screen.
+    """
+    global _NEXT_SIGNIN_IS_FACILITATOR
+
+    if _NEXT_SIGNIN_IS_FACILITATOR:
+        _NEXT_SIGNIN_IS_FACILITATOR = False
+        LOG.info("Facilitator mode disarmed")
+        if _HAS_HARDWARE_FEEDBACK:
+            _show_idle_feedback()
+    else:
+        _NEXT_SIGNIN_IS_FACILITATOR = True
+        LOG.info("Next sign-in armed as facilitator (toggled)")
+        if _HAS_HARDWARE_FEEDBACK:
+            provide_feedback(FeedbackState.FACILITATOR_SIGNIN)
 
 
 def _escape_soql(value: str) -> str:
@@ -225,13 +246,14 @@ def connect_to_salesforce(
     try:
         if username and password:
             sf = _SF(username=username, password=password, security_token=security_token or "", domain=domain)  # type: ignore[arg-type]
-            LOG.info("Connected to Salesforce using password (legacy - SOAP Partner API)")
+            LOG.info(
+                "Connected to Salesforce using password (legacy - SOAP Partner API)"
+            )
             return sf
     except Exception as exc:  # pragma: no cover - runtime
         LOG.exception("Failed to connect to Salesforce: %s", exc)
         sf = None
         return None
-
 
 
 def _get_sobject(sobject_name: str):
@@ -590,8 +612,10 @@ def process_signin_from_card_serial(
         if ids:
             signout_status, signout_msg = sf_sign_out_signins_by_id(ids, now)
             if signout_status == 200:
-                return 200, "successfully_signed_out"
-            return signout_status, signout_msg
+                if not _NEXT_SIGNIN_IS_FACILITATOR:
+                    return 200, "successfully_signed_out"
+            else:
+                return signout_status, signout_msg
     elif open_status != 404:
         # If error is not 404 (no records found), return the error
         return open_status, open_signins
@@ -772,7 +796,7 @@ if __name__ == "__main__":
     connect_to_salesforce()
 
     if _HAS_HARDWARE_FEEDBACK:
-        register_facilitator_button(arm_next_signin_as_facilitator)
+        register_facilitator_button(toggle_next_signin_as_facilitator)
 
     # Start network monitor
     if _HAS_NETWORK_MONITOR:
