@@ -112,7 +112,7 @@ _network_error_displayed: bool = False
 
 def _should_show_ready_feedback() -> bool:
     """Check if ready feedback should be shown.
-
+    
     Returns False if network error is currently displayed.
     """
     return _HAS_HARDWARE_FEEDBACK and not _network_error_displayed
@@ -198,8 +198,13 @@ def connect_to_salesforce(
     password: Optional[str] = None,
     security_token: Optional[str] = None,
     domain: Optional[str] = None,
+    consumer_key: Optional[str] = None,
+    private_key_path: Optional[str] = None,
 ) -> Optional["Salesforce"]:
-    """Connect to Salesforce using provided credentials or environment.
+    """Connect to Salesforce using JWT Bearer Flow (OAuth 2.0) or legacy password auth.
+
+    Prefers JWT if consumer_key and private_key_path are provided (recommended - REST API only).
+    Falls back to username/password (uses SOAP Partner API for login - deprecated).
 
     Returns a `simple_salesforce.Salesforce` instance or `None` on failure.
     """
@@ -216,20 +221,17 @@ def connect_to_salesforce(
     username = username or os.getenv("SF_USERNAME")
     password = password or os.getenv("SF_PASSWORD")
     security_token = security_token or os.getenv("SF_SECURITY_TOKEN")
-    domain = domain or os.getenv("SF_DOMAIN")
 
     try:
         if username and password:
             sf = _SF(username=username, password=password, security_token=security_token or "", domain=domain)  # type: ignore[arg-type]
-        else:
-            # Allow unauthenticated creation (may work if local mocking is used)
-            sf = _SF()  # type: ignore[misc]
-        LOG.info("Connected to Salesforce")
-        return sf
+            LOG.info("Connected to Salesforce using password (legacy - SOAP Partner API)")
+            return sf
     except Exception as exc:  # pragma: no cover - runtime
         LOG.exception("Failed to connect to Salesforce: %s", exc)
         sf = None
         return None
+
 
 
 def _get_sobject(sobject_name: str):
