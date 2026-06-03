@@ -28,6 +28,12 @@
 - Positive (+) → GPIO23 (Pin 16)
 - Negative (-) → Pi GND
 
+## Facilitator Button
+- One side → GPIO24 (Pin 18) by default
+- Other side → Pi GND
+
+The input uses the Pi's internal pull-up resistor, so the button should be wired as a simple momentary switch to ground. You can change the pin with `FACILITATOR_BUTTON_PIN` if needed.
+
 ## 128x128 OLED Display (I2C, SSD1306)
 - VCC → Pi 3.3V (Pin 1) or 5V (Pin 2, check your display specs)
 - GND → Pi GND (Pin 6)
@@ -45,3 +51,4 @@ The default pins can be changed by modifying the constants in `feedback_hardware
 - `RGB_LED_GREEN_PIN = 27`
 - `RGB_LED_BLUE_PIN = 22`
 - `PIEZO_PIN = 23`
+- `FACILITATOR_BUTTON_PIN = 24`
