@@ -7,6 +7,7 @@ All hardware interfaces gracefully degrade when hardware is not available.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from enum import Enum
@@ -28,14 +29,16 @@ _led_clear_timer: Optional[threading.Timer] = None
 # Hardware instances
 _rgb_led: Optional[Any] = None
 _piezo: Optional[Any] = None
+_facilitator_button: Optional[Any] = None
 _oled: Optional[Any] = None
 _draw: Optional[Any] = None
 _font: Optional[Any] = None
 _image: Optional[Any] = None
+_facilitator_button_callback: Optional[Any] = None
 
 # Try to import GPIO libraries (gpiozero for RGB LED and piezo)
 try:
-    from gpiozero import RGBLED, TonalBuzzer
+    from gpiozero import Button, RGBLED, TonalBuzzer
     from gpiozero.tones import Tone
 
     _HAS_GPIO = True
@@ -64,6 +67,7 @@ class FeedbackState(Enum):
     SYSTEM_UNAVAILABLE = "system_unavailable"
     NETWORK_ERROR = "network_error"
     READY_TO_SCAN = "ready_to_scan"
+    FACILITATOR_SIGNIN = "facilitator_signin"
     PROCESSING_SCAN = "processing_scan"
     DEBOUNCED = "debounced"
 
@@ -73,6 +77,7 @@ RGB_LED_RED_PIN = 17
 RGB_LED_GREEN_PIN = 27
 RGB_LED_BLUE_PIN = 22
 PIEZO_PIN = 23
+FACILITATOR_BUTTON_PIN = int(os.getenv("FACILITATOR_BUTTON_PIN", "24"))
 
 # OLED display dimensions
 OLED_WIDTH = 128
@@ -81,7 +86,7 @@ OLED_HEIGHT = 128
 
 def _initialize_hardware() -> None:
     """Initialize hardware components if available (only runs once)."""
-    global _rgb_led, _piezo, _oled, _draw, _font, _image, _hardware_initialized
+    global _rgb_led, _piezo, _facilitator_button, _oled, _draw, _font, _image, _hardware_initialized
 
     # Skip if already initialized
     if _hardware_initialized:
@@ -113,6 +118,21 @@ def _initialize_hardware() -> None:
         except Exception as exc:
             LOG.warning("Failed to initialize piezo buzzer: %s", exc)
             _piezo = None
+
+    if (
+        _HAS_GPIO
+        and _facilitator_button is None
+        and _facilitator_button_callback is not None
+    ):
+        try:
+            _facilitator_button = Button(
+                FACILITATOR_BUTTON_PIN, pull_up=True, bounce_time=0.2
+            )
+            _facilitator_button.when_pressed = _handle_facilitator_button_pressed
+            LOG.info("Facilitator button initialized on pin %d", FACILITATOR_BUTTON_PIN)
+        except Exception as exc:
+            LOG.warning("Failed to initialize facilitator button: %s", exc)
+            _facilitator_button = None
 
     # Initialize OLED display
     if _HAS_OLED and _oled is None:
@@ -188,6 +208,15 @@ def _play_beep_pattern(pattern: List[Tuple[float, float]]) -> None:
     for frequency, duration in pattern:
         _play_tone(frequency, duration)
         time.sleep(0.05)  # Short pause between beeps
+
+
+def _handle_facilitator_button_pressed() -> None:
+    """Handle facilitator button presses."""
+    if _facilitator_button_callback is not None:
+        try:
+            _facilitator_button_callback()
+        except Exception as exc:
+            LOG.exception("Facilitator button callback failed: %s", exc)
 
 
 def _display_text(lines: List[str], clear: bool = True) -> None:
@@ -353,6 +382,17 @@ def provide_feedback(state: FeedbackState, message: str = "") -> None:
         _display_text(["Welcome!", "Scan your card", "to sign in or out"])
         LOG.info("Feedback: Ready to Scan")
 
+    elif state == FeedbackState.FACILITATOR_SIGNIN:
+        # Orange LED, no beep, display facilitator mode
+        if _rgb_led is not None:
+            try:
+                _rgb_led.off()
+            except Exception as exc:
+                LOG.warning("Failed to turn off LED: %s", exc)
+        _set_rgb_color(1, 0.5, 0)
+        _display_text(["Facilitator", "sign in", "Scan your card"])
+        LOG.info("Feedback: Facilitator Sign In")
+
     elif state == FeedbackState.PROCESSING_SCAN:
         # Yellow LED (processing), brief beep, display processing
         _set_rgb_color(1, 1, 0)  # Yellow
@@ -391,14 +431,49 @@ def clear_feedback() -> None:
             LOG.warning("Failed to clear OLED: %s", exc)
 
 
+def register_facilitator_button(callback: Any) -> bool:
+    """Register a callback for the facilitator button.
+
+    Returns True when the button could be configured, False otherwise.
+    """
+    global _facilitator_button_callback, _facilitator_button
+
+    _facilitator_button_callback = callback
+    _initialize_hardware()
+
+    if not _HAS_GPIO:
+        return False
+
+    if _facilitator_button is None:
+        try:
+            _facilitator_button = Button(
+                FACILITATOR_BUTTON_PIN, pull_up=True, bounce_time=0.2
+            )
+            LOG.info("Facilitator button initialized on pin %d", FACILITATOR_BUTTON_PIN)
+        except Exception as exc:
+            LOG.warning("Failed to initialize facilitator button: %s", exc)
+            _facilitator_button = None
+            return False
+
+    _facilitator_button.when_pressed = _handle_facilitator_button_pressed
+    return True
+
+
 def shutdown_hardware() -> None:
     """Shutdown and cleanup hardware resources."""
-    global _rgb_led, _piezo, _oled, _led_clear_timer
+    global _rgb_led, _piezo, _facilitator_button, _oled, _led_clear_timer
 
     # Cancel any pending LED clear timer
     if _led_clear_timer is not None:
         _led_clear_timer.cancel()
         _led_clear_timer = None
+
+    if _facilitator_button is not None:
+        try:
+            _facilitator_button.close()
+        except Exception as exc:
+            LOG.warning("Failed to close facilitator button: %s", exc)
+        _facilitator_button = None
 
     clear_feedback()
 

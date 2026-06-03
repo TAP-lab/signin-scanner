@@ -29,7 +29,12 @@ except Exception:
 
 # Import hardware feedback module
 try:
-    from feedback_hardware import FeedbackState, provide_feedback, shutdown_hardware
+    from feedback_hardware import (
+        FeedbackState,
+        provide_feedback,
+        register_facilitator_button,
+        shutdown_hardware,
+    )
 
     _HAS_HARDWARE_FEEDBACK = True
 except ImportError:
@@ -58,7 +63,12 @@ SIGNIN_SIGNOUT_FIELD = os.getenv("SIGNIN_SIGNOUT_FIELD", "sign_out_time__c")
 SIGNIN_WORKSHOP_FIELD = os.getenv("SIGNIN_WORKSHOP_FIELD", "Workshop_Name__c")
 SIGNIN_NAME_FIELD = os.getenv("SIGNIN_NAME_FIELD", "Name__c")
 SIGNIN_RECORDTYPE_ID = os.getenv("SIGNIN_RECORDTYPE_ID", "")
-SIGNIN_FACILITATOR_FIELD = os.getenv("SIGNIN_FACILITATOR_FIELD", "signin_is_facilitator__c")
+SIGNIN_FACILITATOR_FIELD = os.getenv(
+    "SIGNIN_FACILITATOR_FIELD", "signin_is_facilitator__c"
+)
+SIGNIN_PERSON_WAS_SESSION_FACILITATOR_FIELD = os.getenv(
+    "SIGNIN_PERSON_WAS_SESSION_FACILITATOR_FIELD", "Person_was_session_facilitator__c"
+)
 
 WORKSHOP_SOBJECT = os.getenv("WORKSHOP_SOBJECT", "TAP_lab_Workshop__c")
 WORKSHOP_NAME_FIELD = os.getenv("WORKSHOP_NAME_FIELD", "Name")
@@ -92,6 +102,9 @@ sf: Optional["Salesforce"] = None
 _LAST_CARD_SERIAL: Optional[str] = None
 _LAST_CARD_SEEN: float = 0.0
 
+# One-shot facilitator mode for the next created sign-in record
+_NEXT_SIGNIN_IS_FACILITATOR: bool = False
+
 # Network monitor instance
 _network_monitor: Optional["NetworkMonitor"] = None
 _network_error_displayed: bool = False
@@ -119,8 +132,34 @@ def _on_network_connection_restored() -> None:
     global _network_error_displayed
     LOG.info("Network connection restored - returning to ready state")
     if _HAS_HARDWARE_FEEDBACK:
-        provide_feedback(FeedbackState.READY_TO_SCAN)
+        _show_idle_feedback()
     _network_error_displayed = False
+
+
+def _show_idle_feedback() -> None:
+    """Show the appropriate idle screen for the current sign-in mode."""
+    if not _HAS_HARDWARE_FEEDBACK:
+        return
+
+    if _NEXT_SIGNIN_IS_FACILITATOR:
+        provide_feedback(FeedbackState.FACILITATOR_SIGNIN)
+    else:
+        workshop = sf_get_current_workshop() if sf is not None else "No Event"
+        provide_feedback(
+            FeedbackState.READY_TO_SCAN,
+            workshop=workshop,
+            workshop_callback=sf_get_current_workshop,
+        )
+
+
+def arm_next_signin_as_facilitator() -> None:
+    """Arm facilitator mode for the next created sign-in."""
+    global _NEXT_SIGNIN_IS_FACILITATOR
+
+    _NEXT_SIGNIN_IS_FACILITATOR = True
+    LOG.info("Next sign-in armed as facilitator")
+    if _HAS_HARDWARE_FEEDBACK:
+        provide_feedback(FeedbackState.FACILITATOR_SIGNIN)
 
 
 def _escape_soql(value: str) -> str:
@@ -474,7 +513,9 @@ def sf_get_current_workshop(now: Optional[datetime.datetime] = None) -> str:
 
 
 def sf_create_signin_for_contact(
-    contact_id: str, time_to_signin: Union[None, str, datetime.datetime] = None
+    contact_id: str,
+    time_to_signin: Union[None, str, datetime.datetime] = None,
+    is_facilitator: bool = False,
 ) -> Tuple[int, Any]:
     if not contact_id:
         return 400, "invalid_contact_id"
@@ -509,6 +550,9 @@ def sf_create_signin_for_contact(
         SIGNIN_WORKSHOP_FIELD: workshop_name,
         SIGNIN_NAME_FIELD: contact_name or "",
     }
+    if is_facilitator:
+        payload[SIGNIN_FACILITATOR_FIELD] = True
+        payload[SIGNIN_PERSON_WAS_SESSION_FACILITATOR_FIELD] = True
     if SIGNIN_RECORDTYPE_ID:
         payload["RecordTypeId"] = SIGNIN_RECORDTYPE_ID
 
@@ -525,6 +569,8 @@ def process_signin_from_card_serial(
     card_serial: str, now: Optional[datetime.datetime] = None
 ) -> Tuple[int, Any]:
     """Main processing flow for a card serial: sign out open signins or create a new signin."""
+    global _NEXT_SIGNIN_IS_FACILITATOR
+
     if not card_serial:
         return 400, "invalid_serial"
 
@@ -551,7 +597,12 @@ def process_signin_from_card_serial(
         return open_status, open_signins
 
     # No open sign-ins found, create a new one
-    create_status, create_result = sf_create_signin_for_contact(contact_id, now)
+    facilitator_mode = _NEXT_SIGNIN_IS_FACILITATOR
+    create_status, create_result = sf_create_signin_for_contact(
+        contact_id, now, is_facilitator=facilitator_mode
+    )
+    if create_status == 201 and facilitator_mode:
+        _NEXT_SIGNIN_IS_FACILITATOR = False
     return create_status, create_result
 
 
@@ -720,6 +771,9 @@ if __name__ == "__main__":
 
     connect_to_salesforce()
 
+    if _HAS_HARDWARE_FEEDBACK:
+        register_facilitator_button(arm_next_signin_as_facilitator)
+
     # Start network monitor
     if _HAS_NETWORK_MONITOR:
         _network_monitor = NetworkMonitor(
@@ -740,7 +794,7 @@ if __name__ == "__main__":
                 if not waiting_logged:
                     LOG.info("Waiting for RFID card...")
                     if _should_show_ready_feedback():
-                        provide_feedback(FeedbackState.READY_TO_SCAN)
+                        _show_idle_feedback()
                     waiting_logged = True
                 status, _ = rfid_entry()
                 if status in (200, 201):
@@ -753,7 +807,7 @@ if __name__ == "__main__":
             elif args.terminal:
                 if not waiting_logged:
                     if _should_show_ready_feedback():
-                        provide_feedback(FeedbackState.READY_TO_SCAN)
+                        _show_idle_feedback()
                     waiting_logged = True
                 terminal_entry()
                 time.sleep(6.0)  # Wait before showing ready screen again
