@@ -294,7 +294,12 @@ def _schedule_led_and_oled_clear(delay_seconds: float = 3.0) -> None:
     _led_clear_timer.start()
 
 
-def provide_feedback(state: FeedbackState, message: str = "") -> None:
+def provide_feedback(
+    state: FeedbackState,
+    message: str = "",
+    workshop: str = "",
+    workshop_callback: Optional[Any] = None,
+) -> None:
     """Provide hardware feedback for a given state.
 
     Args:
@@ -379,7 +384,10 @@ def provide_feedback(state: FeedbackState, message: str = "") -> None:
             except Exception as exc:
                 LOG.warning("Failed to turn off LED: %s", exc)
         _set_rgb_color(0, 1, 1)  # Cyan
-        _display_text(["Welcome!", "Scan your card", "to sign in or out"])
+        if workshop:
+            _display_text(["Sign in to", workshop])
+        else:
+            _display_text(["Welcome!", "Scan your card", "to sign in or out"])
         LOG.info("Feedback: Ready to Scan")
 
     elif state == FeedbackState.FACILITATOR_SIGNIN:
