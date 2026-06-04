@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
+import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -33,6 +34,7 @@ try:
         FeedbackState,
         provide_feedback,
         register_facilitator_button,
+        register_idle_callback,
         shutdown_hardware,
     )
 
@@ -102,8 +104,11 @@ sf: Optional["Salesforce"] = None
 _LAST_CARD_SERIAL: Optional[str] = None
 _LAST_CARD_SEEN: float = 0.0
 
-# One-shot facilitator mode for the next created sign-in record
+# One-shot facilitator mode for the next created sign-in record.
+# Accessed from both the main thread and the gpiozero button-press thread;
+# always read or write under _FACILITATOR_LOCK.
 _NEXT_SIGNIN_IS_FACILITATOR: bool = False
+_FACILITATOR_LOCK = threading.Lock()
 
 # Network monitor instance
 _network_monitor: Optional["NetworkMonitor"] = None
@@ -141,46 +146,37 @@ def _show_idle_feedback() -> None:
     if not _HAS_HARDWARE_FEEDBACK:
         return
 
-    if _NEXT_SIGNIN_IS_FACILITATOR:
+    with _FACILITATOR_LOCK:
+        is_facilitator = _NEXT_SIGNIN_IS_FACILITATOR
+
+    if is_facilitator:
         provide_feedback(FeedbackState.FACILITATOR_SIGNIN)
     else:
         workshop = sf_get_current_workshop() if sf is not None else "No Event"
-        provide_feedback(
-            FeedbackState.READY_TO_SCAN,
-            workshop=workshop,
-            workshop_callback=sf_get_current_workshop,
-        )
-
-
-def arm_next_signin_as_facilitator() -> None:
-    """Arm facilitator mode for the next created sign-in."""
-    global _NEXT_SIGNIN_IS_FACILITATOR
-
-    _NEXT_SIGNIN_IS_FACILITATOR = True
-    LOG.info("Next sign-in armed as facilitator")
-    if _HAS_HARDWARE_FEEDBACK:
-        provide_feedback(FeedbackState.FACILITATOR_SIGNIN)
+        provide_feedback(FeedbackState.READY_TO_SCAN, workshop=workshop)
 
 
 def toggle_next_signin_as_facilitator() -> None:
     """Toggle facilitator mode for the next created sign-in.
 
-    If facilitator mode is currently armed, disarm it and return to the
-    normal ready feedback. Otherwise arm facilitator mode and show the
-    facilitator feedback screen.
+    Called from the gpiozero button-press thread, so the flag mutation is
+    protected by _FACILITATOR_LOCK.  Hardware feedback is triggered outside
+    the lock to keep the critical section short.
     """
     global _NEXT_SIGNIN_IS_FACILITATOR
 
-    if _NEXT_SIGNIN_IS_FACILITATOR:
-        _NEXT_SIGNIN_IS_FACILITATOR = False
-        LOG.info("Facilitator mode disarmed")
-        if _HAS_HARDWARE_FEEDBACK:
-            _show_idle_feedback()
-    else:
-        _NEXT_SIGNIN_IS_FACILITATOR = True
+    with _FACILITATOR_LOCK:
+        armed = not _NEXT_SIGNIN_IS_FACILITATOR
+        _NEXT_SIGNIN_IS_FACILITATOR = armed
+
+    if armed:
         LOG.info("Next sign-in armed as facilitator (toggled)")
         if _HAS_HARDWARE_FEEDBACK:
             provide_feedback(FeedbackState.FACILITATOR_SIGNIN)
+    else:
+        LOG.info("Facilitator mode disarmed")
+        if _HAS_HARDWARE_FEEDBACK:
+            _show_idle_feedback()
 
 
 def _escape_soql(value: str) -> str:
@@ -593,6 +589,12 @@ def process_signin_from_card_serial(
     """Main processing flow for a card serial: sign out open signins or create a new signin."""
     global _NEXT_SIGNIN_IS_FACILITATOR
 
+    # Atomically capture and clear facilitator mode so no error path can leave
+    # the flag armed for a future scan by a different person.
+    with _FACILITATOR_LOCK:
+        facilitator_mode = _NEXT_SIGNIN_IS_FACILITATOR
+        _NEXT_SIGNIN_IS_FACILITATOR = False
+
     if not card_serial:
         return 400, "invalid_serial"
 
@@ -612,7 +614,7 @@ def process_signin_from_card_serial(
         if ids:
             signout_status, signout_msg = sf_sign_out_signins_by_id(ids, now)
             if signout_status == 200:
-                if not _NEXT_SIGNIN_IS_FACILITATOR:
+                if not facilitator_mode:
                     return 200, "successfully_signed_out"
             else:
                 return signout_status, signout_msg
@@ -620,13 +622,10 @@ def process_signin_from_card_serial(
         # If error is not 404 (no records found), return the error
         return open_status, open_signins
 
-    # No open sign-ins found, create a new one
-    facilitator_mode = _NEXT_SIGNIN_IS_FACILITATOR
+    # No open sign-ins found (or signed out in facilitator mode), create a new one
     create_status, create_result = sf_create_signin_for_contact(
         contact_id, now, is_facilitator=facilitator_mode
     )
-    if create_status == 201 and facilitator_mode:
-        _NEXT_SIGNIN_IS_FACILITATOR = False
     return create_status, create_result
 
 
@@ -797,6 +796,7 @@ if __name__ == "__main__":
 
     if _HAS_HARDWARE_FEEDBACK:
         register_facilitator_button(toggle_next_signin_as_facilitator)
+        register_idle_callback(_show_idle_feedback)
 
     # Start network monitor
     if _HAS_NETWORK_MONITOR:
