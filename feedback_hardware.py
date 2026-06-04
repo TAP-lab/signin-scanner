@@ -35,6 +35,7 @@ _draw: Optional[Any] = None
 _font: Optional[Any] = None
 _image: Optional[Any] = None
 _facilitator_button_callback: Optional[Any] = None
+_on_idle_callback: Optional[Any] = None
 
 # Try to import GPIO libraries (gpiozero for RGB LED and piezo)
 try:
@@ -86,7 +87,7 @@ OLED_HEIGHT = 128
 
 def _initialize_hardware() -> None:
     """Initialize hardware components if available (only runs once)."""
-    global _rgb_led, _piezo, _facilitator_button, _oled, _draw, _font, _image, _hardware_initialized
+    global _rgb_led, _piezo, _oled, _draw, _font, _image, _hardware_initialized
 
     # Skip if already initialized
     if _hardware_initialized:
@@ -119,21 +120,6 @@ def _initialize_hardware() -> None:
             LOG.warning("Failed to initialize piezo buzzer: %s", exc)
             _piezo = None
 
-    if (
-        _HAS_GPIO
-        and _facilitator_button is None
-        and _facilitator_button_callback is not None
-    ):
-        try:
-            _facilitator_button = Button(
-                FACILITATOR_BUTTON_PIN, pull_up=True, bounce_time=0.2
-            )
-            _facilitator_button.when_pressed = _handle_facilitator_button_pressed
-            LOG.info("Facilitator button initialized on pin %d", FACILITATOR_BUTTON_PIN)
-        except Exception as exc:
-            LOG.warning("Failed to initialize facilitator button: %s", exc)
-            _facilitator_button = None
-
     # Initialize OLED display
     if _HAS_OLED and _oled is None:
         try:
@@ -142,8 +128,9 @@ def _initialize_hardware() -> None:
             _oled.fill(0)
             _oled.show()
 
-            # Create blank image for drawing
-            _image = Image.new("1", (_oled.width, _oled.height))
+            # Use 8-bit greyscale so Pillow can anti-alias TrueType glyphs.
+            # The image is thresholded to 1-bit just before sending to the display.
+            _image = Image.new("L", (_oled.width, _oled.height))
             _draw = ImageDraw.Draw(_image)
 
             # Try to load a TrueType font from common locations
@@ -155,7 +142,7 @@ def _initialize_hardware() -> None:
             ]
             for font_path in font_paths:
                 try:
-                    _font = ImageFont.truetype(font_path, 12)
+                    _font = ImageFont.truetype(font_path, 14)
                     break
                 except Exception:
                     continue
@@ -219,8 +206,67 @@ def _handle_facilitator_button_pressed() -> None:
             LOG.exception("Facilitator button callback failed: %s", exc)
 
 
+def _measure_text(text: str) -> int:
+    """Return the pixel width of text rendered in the current font."""
+    if _draw is None:
+        return len(text) * 8
+    try:
+        return int(_draw.textbbox((0, 0), text, font=_font)[2])
+    except Exception:
+        try:
+            w, _ = _draw.textsize(text, font=_font)  # type: ignore[attr-defined]
+            return w
+        except Exception:
+            return len(text) * 8
+
+
+def _wrap_and_clip(lines: List[str], max_width: int, max_lines: int) -> List[str]:
+    """Word-wrap lines to fit max_width pixels, then cap at max_lines.
+
+    Lines that cannot be word-wrapped (e.g. a single long word) are truncated
+    with an ellipsis.
+    """
+    result: List[str] = []
+    for raw in lines:
+        if len(result) >= max_lines:
+            break
+        if _measure_text(raw) <= max_width:
+            result.append(raw)
+            continue
+        # Word-wrap
+        words = raw.split()
+        current = ""
+        for word in words:
+            if len(result) >= max_lines:
+                break
+            candidate = (current + " " + word).strip() if current else word
+            if _measure_text(candidate) <= max_width:
+                current = candidate
+            else:
+                if current:
+                    result.append(current)
+                current = word
+        if current and len(result) < max_lines:
+            result.append(current)
+
+    # Truncate any line that still overflows (e.g. a single word wider than the display)
+    clipped: List[str] = []
+    for line in result:
+        if _measure_text(line) <= max_width:
+            clipped.append(line)
+        else:
+            while line and _measure_text(line + "…") > max_width:
+                line = line[:-1]
+            clipped.append(line + "…")
+    return clipped
+
+
 def _display_text(lines: List[str], clear: bool = True) -> None:
-    """Display text on OLED screen."""
+    """Display text on OLED screen.
+
+    Lines are word-wrapped to fit within the horizontal margins and clipped
+    to the number of lines that fit vertically below y_offset.
+    """
     if _oled is None or _draw is None or _image is None:
         return
 
@@ -228,15 +274,17 @@ def _display_text(lines: List[str], clear: bool = True) -> None:
         if clear:
             _draw.rectangle((0, 0, _oled.width, _oled.height), outline=0, fill=0)
 
-        line_height = 18
-        y_offset = 74  # Start further down from the top (moved down by 2 lines)
         x_margin = 10
+        y_offset = 74
+        line_height = 18
+        max_width = _oled.width - 2 * x_margin
+        max_lines = max(1, (_oled.height - y_offset) // line_height)
 
-        for line in lines:
+        for line in _wrap_and_clip(lines, max_width, max_lines):
             _draw.text((x_margin, y_offset), line, font=_font, fill=255)
             y_offset += line_height
 
-        _oled.image(_image)
+        _oled.image(_image.convert("1"))
         _oled.show()
     except Exception as exc:
         LOG.warning("Failed to display text on OLED: %s", exc)
@@ -283,10 +331,15 @@ def _schedule_led_and_oled_clear(delay_seconds: float = 3.0) -> None:
     if _led_clear_timer is not None:
         _led_clear_timer.cancel()
 
-    # Define the clear function - returns to ready state
+    # Define the clear function - returns to idle state via registered callback
     def _clear_and_ready():
-        # Return to ready state
-        provide_feedback(FeedbackState.READY_TO_SCAN)
+        if _on_idle_callback is not None:
+            try:
+                _on_idle_callback()
+            except Exception as exc:
+                LOG.exception("Idle callback failed: %s", exc)
+        else:
+            provide_feedback(FeedbackState.READY_TO_SCAN)
 
     # Schedule new timer
     _led_clear_timer = threading.Timer(delay_seconds, _clear_and_ready)
@@ -298,7 +351,6 @@ def provide_feedback(
     state: FeedbackState,
     message: str = "",
     workshop: str = "",
-    workshop_callback: Optional[Any] = None,
 ) -> None:
     """Provide hardware feedback for a given state.
 
@@ -455,7 +507,7 @@ def register_facilitator_button(callback: Any) -> bool:
     if _facilitator_button is None:
         try:
             _facilitator_button = Button(
-                FACILITATOR_BUTTON_PIN, pull_up=True, bounce_time=0.2
+                FACILITATOR_BUTTON_PIN, pull_up=False, bounce_time=0.2
             )
             LOG.info("Facilitator button initialized on pin %d", FACILITATOR_BUTTON_PIN)
         except Exception as exc:
@@ -465,6 +517,18 @@ def register_facilitator_button(callback: Any) -> bool:
 
     _facilitator_button.when_pressed = _handle_facilitator_button_pressed
     return True
+
+
+def register_idle_callback(callback: Any) -> None:
+    """Register a callback invoked whenever the display returns to the idle/ready state.
+
+    The callback is called by the auto-clear timer after error states (CARD_NOT_EXIST,
+    SCAN_ERROR, SYSTEM_UNAVAILABLE) expire.  Registering from signin.py lets the timer
+    show the correct idle screen (normal or facilitator) without feedback_hardware.py
+    needing to know about signin state.
+    """
+    global _on_idle_callback
+    _on_idle_callback = callback
 
 
 def shutdown_hardware() -> None:
