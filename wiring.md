@@ -29,14 +29,12 @@
 - Negative (-) → Pi GND
 
 ## Facilitator Button
-- One side → GPIO24 (Pin 18) by default
+- One side → GPIO16 (Pin 36) by default
 - Other side → Pi 3.3V (Pin 1 or Pin 17)
 
 The input uses the Pi's internal pull-down resistor, so the button should be wired as a simple momentary switch to 3.3V. You can change the pin with `FACILITATOR_BUTTON_PIN` if needed.
 
 > **Note:** Do not wire to the 5V rail (Pins 2/4) — GPIO pins are 3.3V logic and connecting 5V directly can damage the Pi.
-
-> **Pin conflict:** The RFID reader's optional IRQ line is also listed as GPIO24 above. If you connect the IRQ wire, use a different pin for the button and set `FACILITATOR_BUTTON_PIN` accordingly.
 
 ## 128x128 OLED Display (I2C, SSD1306)
 - VCC → Pi 3.3V (Pin 1) or 5V (Pin 2, check your display specs)
@@ -55,4 +53,4 @@ The default pins can be changed by modifying the constants in `feedback_hardware
 - `RGB_LED_GREEN_PIN = 27`
 - `RGB_LED_BLUE_PIN = 22`
 - `PIEZO_PIN = 23`
-- `FACILITATOR_BUTTON_PIN = 24`
+- `FACILITATOR_BUTTON_PIN = 16`
