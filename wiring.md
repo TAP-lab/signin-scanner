@@ -31,7 +31,7 @@
 ## Facilitator Button
 - One side → GPIO16 (Pin 36) by default
 - Other side → Pi 3.3V (Pin 1 or Pin 17)
-
+ 
 The input uses the Pi's internal pull-down resistor, so the button should be wired as a simple momentary switch to 3.3V. You can change the pin with `FACILITATOR_BUTTON_PIN` if needed.
 
 > **Note:** Do not wire to the 5V rail (Pins 2/4) — GPIO pins are 3.3V logic and connecting 5V directly can damage the Pi.
