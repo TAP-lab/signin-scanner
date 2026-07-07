@@ -23,6 +23,7 @@ LOG = logging.getLogger(__name__)
 LOG.addHandler(logging.NullHandler())
 
 ICS_FETCH_TIMEOUT_SECONDS = 15.0
+RETRY_INTERVAL_SECONDS = 3600.0  # retry sooner than the next daily run on failure
 
 
 def _normalize_title(title: str) -> str:
@@ -55,6 +56,7 @@ class WorkshopCalendarSync:
         oneoff_weekday: int = 9,
         sync_hour: int = 4,
         fetch_timeout: float = ICS_FETCH_TIMEOUT_SECONDS,
+        retry_interval: float = RETRY_INTERVAL_SECONDS,
     ):
         self.ics_url = ics_url
         self.get_sf = get_sf
@@ -67,6 +69,7 @@ class WorkshopCalendarSync:
         self.oneoff_weekday = oneoff_weekday
         self.sync_hour = sync_hour
         self.fetch_timeout = fetch_timeout
+        self.retry_interval = retry_interval
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -103,22 +106,33 @@ class WorkshopCalendarSync:
         LOG.info("Workshop calendar sync stopped")
 
     def _loop(self) -> None:
-        try:
-            self.sync_once()
-        except Exception:
-            LOG.exception("Initial workshop calendar sync failed")
+        failed = self._run_sync_safely("Initial")
 
         while self._running:
-            sleep_seconds = self._seconds_until_next_run()
-            LOG.debug("Next workshop calendar sync in %.0fs", sleep_seconds)
+            if failed:
+                sleep_seconds = self.retry_interval
+                LOG.info(
+                    "Workshop calendar sync failed; retrying in %.0f minutes",
+                    sleep_seconds / 60,
+                )
+            else:
+                sleep_seconds = self._seconds_until_next_run()
+                LOG.debug("Next workshop calendar sync in %.0fs", sleep_seconds)
+
             self._wake_event.wait(sleep_seconds)
             self._wake_event.clear()
             if not self._running:
                 break
-            try:
-                self.sync_once()
-            except Exception:
-                LOG.exception("Scheduled workshop calendar sync failed")
+            failed = self._run_sync_safely("Scheduled")
+
+    def _run_sync_safely(self, label: str) -> bool:
+        """Run one sync pass, catching exceptions. Returns True if it failed."""
+        try:
+            stats = self.sync_once()
+        except Exception:
+            LOG.exception("%s workshop calendar sync failed", label)
+            return True
+        return isinstance(stats, dict) and "error" in stats
 
     def _seconds_until_next_run(
         self, now: Optional[datetime.datetime] = None
