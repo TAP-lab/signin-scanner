@@ -7,6 +7,7 @@ A Raspberry Pi sign-in processor that reads RFID cards or terminal input to crea
 - Salesforce-backed lookups and record creation
 - Continuous operation mode with RFID debounce
 - Systemd service install script for autonomous operation
+- Daily calendar sync that creates one-off workshops in Salesforce from an ICS feed
 - **User feedback loop with RGB LED, passive piezo buzzer, and OLED display**
   - Visual feedback via RGB LED (different colors for different states)
   - Audio feedback via passive piezo buzzer (different beep patterns)
@@ -228,6 +229,25 @@ To maintain system reliability, a scheduled reboot occurs at 1:00 AM daily via c
 - Helps clear memory leaks and reset system state
 - Implemented as a simple cron job for minimal overhead
 - Can be disabled by editing root's crontab: `sudo crontab -e`
+
+## Workshop Calendar Sync
+Salesforce has no native ICS import, so one-off/special events (as opposed to the
+recurring weekly workshops configured in Salesforce) are authored in a shared
+calendar instead. `workshop_calendar_sync.py` keeps Salesforce in sync with that
+calendar so both the RFID and terminal sign-in flows can tag sign-ins with them:
+
+- Runs once when the service starts (covers restart/reload), then daily at
+  `WORKSHOP_SYNC_HOUR` (default 4am) local time
+- Fetches the feed at `WORKSHOP_ICS_URL`, expanding recurring ICS events, and
+  reads only the current local day's events
+- Compares event titles (case/whitespace-insensitive) against Salesforce
+  workshops already covering today (matched by weekday or by `WORKSHOP_DATE_FIELD`)
+  and creates any that are missing
+- Created workshops get `WORKSHOP_WEEKDAY_FIELD` set to `WORKSHOP_ONEOFF_WEEKDAY`
+  (default 9 - no day of week maps to it) so they don't recur, and
+  `WORKSHOP_DATE_FIELD` set to the event's date
+- All-day ICS events are skipped (no bookable time range)
+- Sync is disabled entirely when `WORKSHOP_ICS_URL` is unset
 
 ## Notes
 - Uses OS local timezone (with DST) for workshop matching
