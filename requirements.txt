@@ -2,6 +2,12 @@
 simple-salesforce
 python-dotenv
 PyJWT
+requests
+
+# Workshop calendar sync (ICS feed parsing)
+icalendar
+recurring-ical-events
+
 # mfrc522 is Raspberry-Pi specific; install only on Linux
 mfrc522; sys_platform == "linux"
 

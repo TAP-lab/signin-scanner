@@ -50,6 +50,14 @@ try:
 except ImportError:
     _HAS_NETWORK_MONITOR = False
 
+# Import workshop calendar sync module
+try:
+    from workshop_calendar_sync import WorkshopCalendarSync
+
+    _HAS_CALENDAR_SYNC = True
+except ImportError:
+    _HAS_CALENDAR_SYNC = False
+
 LOG = logging.getLogger(__name__)
 LOG.addHandler(logging.NullHandler())
 
@@ -77,7 +85,14 @@ WORKSHOP_NAME_FIELD = os.getenv("WORKSHOP_NAME_FIELD", "Name")
 WORKSHOP_START_FIELD = os.getenv("WORKSHOP_START_FIELD", "Start_Time__c")
 WORKSHOP_END_FIELD = os.getenv("WORKSHOP_END_FIELD", "End_Time__c")
 WORKSHOP_WEEKDAY_FIELD = os.getenv("WORKSHOP_WEEKDAY_FIELD", "Weekday__c")
+WORKSHOP_DATE_FIELD = os.getenv("WORKSHOP_DATE_FIELD", "Workshop_Date__c")
 WORKSHOP_LOOKAHEAD_MINUTES = int(os.getenv("WORKSHOP_LOOKAHEAD_MINUTES", "30"))
+
+# Workshop calendar sync (one-off events pulled from an ICS feed; see
+# workshop_calendar_sync.py). Sync is disabled when WORKSHOP_ICS_URL is unset.
+WORKSHOP_ICS_URL = os.getenv("WORKSHOP_ICS_URL", "")
+WORKSHOP_ONEOFF_WEEKDAY = int(os.getenv("WORKSHOP_ONEOFF_WEEKDAY", "9"))
+WORKSHOP_SYNC_HOUR = int(os.getenv("WORKSHOP_SYNC_HOUR", "4"))
 
 PENDING_CARD_SOBJECT = os.getenv("PENDING_CARD_SOBJECT", "Pending_card_registration__c")
 PENDING_CARD_SERIAL_FIELD = os.getenv("PENDING_CARD_SERIAL_FIELD", "Card_Serial__c")
@@ -118,6 +133,9 @@ _facilitator_timeout_timer: Optional[threading.Timer] = None
 # Network monitor instance
 _network_monitor: Optional["NetworkMonitor"] = None
 _network_error_displayed: bool = False
+
+# Workshop calendar sync instance
+_calendar_sync: Optional["WorkshopCalendarSync"] = None
 
 
 def _should_show_ready_feedback() -> bool:
@@ -240,6 +258,16 @@ def _ensure_connected() -> Tuple[bool, Optional[Tuple[int, str]]]:
     if sf is None and connect_to_salesforce() is None:
         return False, (500, "salesforce_not_connected")
     return True, None
+
+
+def _get_connected_sf() -> Optional["Salesforce"]:
+    """Return the connected Salesforce client, or None if unavailable.
+
+    Passed to WorkshopCalendarSync so it can (re)connect on its own schedule
+    without importing this module.
+    """
+    connected, _ = _ensure_connected()
+    return sf if connected else None
 
 
 def _format_time(value: Union[None, str, datetime.datetime]) -> str:
@@ -508,7 +536,15 @@ def sf_get_current_workshop(now: Optional[datetime.datetime] = None) -> str:
         LOG.warning("Cannot determine workshop: not connected to Salesforce")
         return "No Event"
 
-    query = f"SELECT {WORKSHOP_NAME_FIELD}, {WORKSHOP_START_FIELD}, {WORKSHOP_END_FIELD} FROM {WORKSHOP_SOBJECT} WHERE {WORKSHOP_WEEKDAY_FIELD} = {weekday_sf}"
+    # Match recurring weekly workshops (by weekday) as well as one-off
+    # workshops synced from the ICS calendar feed for today's date - see
+    # workshop_calendar_sync.py.
+    today_str = now_local.date().isoformat()
+    query = (
+        f"SELECT {WORKSHOP_NAME_FIELD}, {WORKSHOP_START_FIELD}, {WORKSHOP_END_FIELD} "
+        f"FROM {WORKSHOP_SOBJECT} "
+        f"WHERE {WORKSHOP_WEEKDAY_FIELD} = {weekday_sf} OR {WORKSHOP_DATE_FIELD} = {today_str}"
+    )
 
     try:
         res = sf.query(query)  # type: ignore[attr-defined]
@@ -858,6 +894,27 @@ if __name__ == "__main__":
     else:
         LOG.warning("Network monitoring not available")
 
+    # Start workshop calendar sync (pulls one-off events from an ICS feed)
+    if _HAS_CALENDAR_SYNC and WORKSHOP_ICS_URL:
+        _calendar_sync = WorkshopCalendarSync(
+            ics_url=WORKSHOP_ICS_URL,
+            get_sf=_get_connected_sf,
+            sobject_name=WORKSHOP_SOBJECT,
+            name_field=WORKSHOP_NAME_FIELD,
+            start_field=WORKSHOP_START_FIELD,
+            end_field=WORKSHOP_END_FIELD,
+            weekday_field=WORKSHOP_WEEKDAY_FIELD,
+            date_field=WORKSHOP_DATE_FIELD,
+            oneoff_weekday=WORKSHOP_ONEOFF_WEEKDAY,
+            sync_hour=WORKSHOP_SYNC_HOUR,
+        )
+        _calendar_sync.start()
+        LOG.info("Workshop calendar sync enabled")
+    elif not _HAS_CALENDAR_SYNC:
+        LOG.warning("Workshop calendar sync not available (missing dependencies)")
+    else:
+        LOG.info("WORKSHOP_ICS_URL not set; workshop calendar sync disabled")
+
     waiting_logged = False
 
     LOG.info("Running. Press Ctrl+C to stop.")
@@ -889,6 +946,8 @@ if __name__ == "__main__":
         LOG.info("\nStopped by user.")
         if _network_monitor is not None:
             _network_monitor.stop()
+        if _calendar_sync is not None:
+            _calendar_sync.stop()
         if _HAS_HARDWARE_FEEDBACK:
             shutdown_hardware()
         raise SystemExit(0)
