@@ -110,6 +110,11 @@ _LAST_CARD_SEEN: float = 0.0
 _NEXT_SIGNIN_IS_FACILITATOR: bool = False
 _FACILITATOR_LOCK = threading.Lock()
 
+# If facilitator mode is armed but no card is scanned within this many
+# seconds, it auto-reverts to normal mode. Guarded by _FACILITATOR_LOCK.
+_FACILITATOR_TIMEOUT_SECONDS = float(os.getenv("FACILITATOR_TIMEOUT_SECONDS", "45"))
+_facilitator_timeout_timer: Optional[threading.Timer] = None
+
 # Network monitor instance
 _network_monitor: Optional["NetworkMonitor"] = None
 _network_error_displayed: bool = False
@@ -156,21 +161,60 @@ def _show_idle_feedback() -> None:
         provide_feedback(FeedbackState.READY_TO_SCAN, workshop=workshop)
 
 
+def _facilitator_timeout_expired() -> None:
+    """Timer callback: auto-revert facilitator mode if still armed and unused.
+
+    Runs on the threading.Timer's own thread, so the flag mutation is
+    protected by _FACILITATOR_LOCK like every other access.
+    """
+    global _NEXT_SIGNIN_IS_FACILITATOR, _facilitator_timeout_timer
+
+    with _FACILITATOR_LOCK:
+        _facilitator_timeout_timer = None
+        if not _NEXT_SIGNIN_IS_FACILITATOR:
+            return
+        _NEXT_SIGNIN_IS_FACILITATOR = False
+
+    LOG.info(
+        "Facilitator mode timed out after %.0fs with no sign-in; reverting to normal mode",
+        _FACILITATOR_TIMEOUT_SECONDS,
+    )
+    if _HAS_HARDWARE_FEEDBACK:
+        _show_idle_feedback()
+
+
 def toggle_next_signin_as_facilitator() -> None:
     """Toggle facilitator mode for the next created sign-in.
 
     Called from the gpiozero button-press thread, so the flag mutation is
     protected by _FACILITATOR_LOCK.  Hardware feedback is triggered outside
     the lock to keep the critical section short.
+
+    Arming starts a _FACILITATOR_TIMEOUT_SECONDS timer that auto-disarms the
+    mode if no card is scanned in time.
     """
-    global _NEXT_SIGNIN_IS_FACILITATOR
+    global _NEXT_SIGNIN_IS_FACILITATOR, _facilitator_timeout_timer
 
     with _FACILITATOR_LOCK:
         armed = not _NEXT_SIGNIN_IS_FACILITATOR
         _NEXT_SIGNIN_IS_FACILITATOR = armed
 
+        if _facilitator_timeout_timer is not None:
+            _facilitator_timeout_timer.cancel()
+            _facilitator_timeout_timer = None
+
+        if armed:
+            _facilitator_timeout_timer = threading.Timer(
+                _FACILITATOR_TIMEOUT_SECONDS, _facilitator_timeout_expired
+            )
+            _facilitator_timeout_timer.daemon = True
+            _facilitator_timeout_timer.start()
+
     if armed:
-        LOG.info("Next sign-in armed as facilitator (toggled)")
+        LOG.info(
+            "Next sign-in armed as facilitator (toggled); auto-reverts in %.0fs if unused",
+            _FACILITATOR_TIMEOUT_SECONDS,
+        )
         if _HAS_HARDWARE_FEEDBACK:
             provide_feedback(FeedbackState.FACILITATOR_SIGNIN)
     else:
@@ -587,13 +631,18 @@ def process_signin_from_card_serial(
     card_serial: str, now: Optional[datetime.datetime] = None
 ) -> Tuple[int, Any]:
     """Main processing flow for a card serial: sign out open signins or create a new signin."""
-    global _NEXT_SIGNIN_IS_FACILITATOR
+    global _NEXT_SIGNIN_IS_FACILITATOR, _facilitator_timeout_timer
 
     # Atomically capture and clear facilitator mode so no error path can leave
     # the flag armed for a future scan by a different person.
     with _FACILITATOR_LOCK:
         facilitator_mode = _NEXT_SIGNIN_IS_FACILITATOR
         _NEXT_SIGNIN_IS_FACILITATOR = False
+        timeout_timer = _facilitator_timeout_timer
+        _facilitator_timeout_timer = None
+
+    if timeout_timer is not None:
+        timeout_timer.cancel()
 
     if not card_serial:
         return 400, "invalid_serial"
