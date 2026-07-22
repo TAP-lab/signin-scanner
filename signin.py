@@ -17,6 +17,7 @@ import os
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple, Union
+from zoneinfo import ZoneInfo
 
 try:
     from dotenv import load_dotenv
@@ -87,6 +88,12 @@ WORKSHOP_END_FIELD = os.getenv("WORKSHOP_END_FIELD", "End_Time__c")
 WORKSHOP_WEEKDAY_FIELD = os.getenv("WORKSHOP_WEEKDAY_FIELD", "Weekday__c")
 WORKSHOP_DATE_FIELD = os.getenv("WORKSHOP_DATE_FIELD", "Workshop_Date__c")
 WORKSHOP_LOOKAHEAD_MINUTES = int(os.getenv("WORKSHOP_LOOKAHEAD_MINUTES", "30"))
+
+# IANA timezone used for all workshop time-of-day matching, independent of the
+# host OS clock's timezone (Raspberry Pi OS defaults to UTC unless explicitly
+# reconfigured, which previously caused workshop times to be off by the local
+# UTC offset). Leave blank to fall back to the OS's local timezone.
+WORKSHOP_TIMEZONE = os.getenv("WORKSHOP_TIMEZONE", "Pacific/Auckland")
 
 # Workshop calendar sync (one-off events pulled from an ICS feed; see
 # workshop_calendar_sync.py). Sync is disabled when WORKSHOP_ICS_URL is unset.
@@ -239,6 +246,31 @@ def toggle_next_signin_as_facilitator() -> None:
         LOG.info("Facilitator mode disarmed")
         if _HAS_HARDWARE_FEEDBACK:
             _show_idle_feedback()
+
+
+_workshop_tzinfo_cache: Dict[str, Optional[datetime.tzinfo]] = {}
+
+
+def _get_workshop_tzinfo() -> Optional[datetime.tzinfo]:
+    """Resolve WORKSHOP_TIMEZONE to a tzinfo, or None to fall back to OS local time.
+
+    Cached since ZoneInfo lookups touch the system/tzdata database.
+    """
+    if WORKSHOP_TIMEZONE in _workshop_tzinfo_cache:
+        return _workshop_tzinfo_cache[WORKSHOP_TIMEZONE]
+
+    tzinfo: Optional[datetime.tzinfo] = None
+    if WORKSHOP_TIMEZONE:
+        try:
+            tzinfo = ZoneInfo(WORKSHOP_TIMEZONE)
+        except Exception as exc:
+            LOG.warning(
+                "Invalid WORKSHOP_TIMEZONE %r (%s); falling back to OS local time",
+                WORKSHOP_TIMEZONE,
+                exc,
+            )
+    _workshop_tzinfo_cache[WORKSHOP_TIMEZONE] = tzinfo
+    return tzinfo
 
 
 def _escape_soql(value: str) -> str:
@@ -522,8 +554,11 @@ def sf_get_current_workshop(now: Optional[datetime.datetime] = None) -> str:
     Returns the name of the currently running or upcoming workshop,
     or "No Event" if none can be determined.
     """
-    # Use OS local timezone (handles DST) for matching against workshop times
-    now_local = (now or datetime.datetime.now(datetime.timezone.utc)).astimezone()
+    # Use WORKSHOP_TIMEZONE (handles DST) for matching against workshop times,
+    # not the host OS clock's timezone - see _get_workshop_tzinfo.
+    now_local = (now or datetime.datetime.now(datetime.timezone.utc)).astimezone(
+        _get_workshop_tzinfo()
+    )
     # Convert to 1=Sunday weekday format (Python's weekday() is 0=Monday)
     # Python: Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
     # Salesforce: Sun=1, Mon=2, Tue=3, Wed=4, Thu=5, Fri=6, Sat=7
@@ -907,6 +942,7 @@ if __name__ == "__main__":
             date_field=WORKSHOP_DATE_FIELD,
             oneoff_weekday=WORKSHOP_ONEOFF_WEEKDAY,
             sync_hour=WORKSHOP_SYNC_HOUR,
+            tz=_get_workshop_tzinfo(),
         )
         _calendar_sync.start()
         LOG.info("Workshop calendar sync enabled")

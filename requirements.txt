@@ -7,6 +7,8 @@ requests
 # Workshop calendar sync (ICS feed parsing)
 icalendar
 recurring-ical-events
+# Provides the IANA tz database for zoneinfo on platforms without system tzdata
+tzdata
 
 # mfrc522 is Raspberry-Pi specific; install only on Linux
 mfrc522; sys_platform == "linux"
