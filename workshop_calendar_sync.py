@@ -57,6 +57,7 @@ class WorkshopCalendarSync:
         sync_hour: int = 4,
         fetch_timeout: float = ICS_FETCH_TIMEOUT_SECONDS,
         retry_interval: float = RETRY_INTERVAL_SECONDS,
+        tz: Optional[datetime.tzinfo] = None,
     ):
         self.ics_url = ics_url
         self.get_sf = get_sf
@@ -70,6 +71,9 @@ class WorkshopCalendarSync:
         self.sync_hour = sync_hour
         self.fetch_timeout = fetch_timeout
         self.retry_interval = retry_interval
+        # Pinned timezone for all "today"/time-of-day matching, independent of
+        # the host OS clock's timezone. None falls back to OS local time.
+        self.tz = tz
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -134,10 +138,14 @@ class WorkshopCalendarSync:
             return True
         return isinstance(stats, dict) and "error" in stats
 
+    def _now_local(self, now: Optional[datetime.datetime] = None) -> datetime.datetime:
+        base = now or datetime.datetime.now(datetime.timezone.utc)
+        return base.astimezone(self.tz)
+
     def _seconds_until_next_run(
         self, now: Optional[datetime.datetime] = None
     ) -> float:
-        now_local = (now or datetime.datetime.now(datetime.timezone.utc)).astimezone()
+        now_local = self._now_local(now)
         next_run = now_local.replace(
             hour=self.sync_hour, minute=0, second=0, microsecond=0
         )
@@ -151,7 +159,7 @@ class WorkshopCalendarSync:
             LOG.debug("No ICS URL configured; skipping calendar sync")
             return {"skipped": "no_ics_url"}
 
-        now_local = (now or datetime.datetime.now(datetime.timezone.utc)).astimezone()
+        now_local = self._now_local(now)
         today = now_local.date()
 
         try:
@@ -214,8 +222,8 @@ class WorkshopCalendarSync:
         response.raise_for_status()
         calendar = icalendar.Calendar.from_ical(response.content)
 
-        day_start = datetime.datetime.combine(date, datetime.time.min).astimezone()
-        day_end = datetime.datetime.combine(date, datetime.time.max).astimezone()
+        day_start = self._local_day_bound(date, datetime.time.min)
+        day_end = self._local_day_bound(date, datetime.time.max)
 
         occurrences = recurring_ical_events.of(calendar).between(day_start, day_end)
 
@@ -244,6 +252,12 @@ class WorkshopCalendarSync:
             # A bare `date` (no time component) means an all-day event.
             return {"name": name, "all_day": True, "start_time": None, "end_time": None}
 
+        LOG.debug(
+            "Parsing ICS event %r: raw DTSTART=%r (tzinfo=%r)",
+            name,
+            dtstart,
+            dtstart.tzinfo,
+        )
         start_local = self._to_local(dtstart)
 
         dtend_prop = component.get("DTEND")
@@ -256,11 +270,23 @@ class WorkshopCalendarSync:
             "end_time": end_local.time(),
         }
 
-    @staticmethod
-    def _to_local(value: datetime.datetime) -> datetime.datetime:
+    def _local_day_bound(self, date: datetime.date, time_of_day: datetime.time) -> datetime.datetime:
+        """A naive (date, time) combination, attached to self.tz (or OS local)."""
+        naive = datetime.datetime.combine(date, time_of_day)
+        if self.tz is not None:
+            return naive.replace(tzinfo=self.tz)
+        return naive.astimezone()
+
+    def _to_local(self, value: datetime.datetime) -> datetime.datetime:
         if value.tzinfo is None:
-            value = value.replace(tzinfo=datetime.timezone.utc)
-        return value.astimezone()
+            # A "floating" time (RFC 5545) has no defined zone. For a single-
+            # timezone calendar the sane reading is that it's already wall-clock
+            # time in the workshop timezone - not UTC, which would silently
+            # shift it by the UTC offset (e.g. 12h early for Pacific/Auckland).
+            if self.tz is not None:
+                return value.replace(tzinfo=self.tz)
+            return value.astimezone()  # naive -> OS-local, no shift
+        return value.astimezone(self.tz)
 
     def _get_existing_workshop_titles_for_today(
         self, sf: Any, now_local: datetime.datetime

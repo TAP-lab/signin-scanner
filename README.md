@@ -250,6 +250,9 @@ calendar so both the RFID and terminal sign-in flows can tag sign-ins with them:
 - Sync is disabled entirely when `WORKSHOP_ICS_URL` is unset
 
 ## Notes
-- Uses OS local timezone (with DST) for workshop matching
+- Workshop matching (recurring and calendar-synced) uses `WORKSHOP_TIMEZONE` (with DST),
+  not the host OS clock's timezone - a Pi left on its default UTC clock would
+  otherwise cause workshop times to be off by the local UTC offset. Leave
+  `WORKSHOP_TIMEZONE` blank to fall back to the OS's local timezone instead.
 - RFIDs that match open sign-ins trigger sign-out; otherwise a new sign-in is created
 - Debounce prevents repeated scans when a card is held over the reader
