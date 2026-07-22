@@ -40,6 +40,17 @@ def _to_salesforce_weekday(now_local: datetime.datetime) -> int:
     return 7 if weekday_sf == 0 else weekday_sf
 
 
+def _format_salesforce_time(value: datetime.time) -> str:
+    """Format a time for a Salesforce Time field's HH:MM:SS.SSSZ literal.
+
+    The 'Z' is required syntax for this datatype, not a real UTC marker -
+    Time fields have no timezone. Sending a bare "HH:MM:SS" (no milliseconds/Z)
+    was silently misinterpreted by Salesforce as a 12-hour value (e.g. 19:00
+    wrapped to 07:00) rather than rejected outright.
+    """
+    return value.strftime("%H:%M:%S.%f")[:-3] + "Z"
+
+
 class WorkshopCalendarSync:
     """Periodically syncs one-off ICS calendar events into Salesforce as workshops."""
 
@@ -322,8 +333,8 @@ class WorkshopCalendarSync:
 
         payload = {
             self.name_field: event["name"],
-            self.start_field: event["start_time"].strftime("%H:%M:%S"),
-            self.end_field: event["end_time"].strftime("%H:%M:%S"),
+            self.start_field: _format_salesforce_time(event["start_time"]),
+            self.end_field: _format_salesforce_time(event["end_time"]),
             self.weekday_field: self.oneoff_weekday,
             self.date_field: today.isoformat(),
         }
