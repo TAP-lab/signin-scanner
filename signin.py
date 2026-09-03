@@ -16,6 +16,7 @@ import logging
 import os
 import threading
 import time
+from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 try:
@@ -119,13 +120,24 @@ sf: Optional["Salesforce"] = None
 _LAST_CARD_SERIAL: Optional[str] = None
 _LAST_CARD_SEEN: float = 0.0
 
-# One-shot facilitator mode for the next created sign-in record.
+class SigninMode(Enum):
+    """One-shot mode for the next card scan, cycled by the facilitator button."""
+
+    NORMAL = "normal"
+    FACILITATOR = "facilitator"
+    SIGN_OUT_ALL = "sign_out_all"
+
+
+# Order the button cycles through on each press.
+_SIGNIN_MODE_CYCLE = [SigninMode.NORMAL, SigninMode.FACILITATOR, SigninMode.SIGN_OUT_ALL]
+
+# One-shot mode for the next created/processed sign-in.
 # Accessed from both the main thread and the gpiozero button-press thread;
 # always read or write under _FACILITATOR_LOCK.
-_NEXT_SIGNIN_IS_FACILITATOR: bool = False
+_NEXT_SIGNIN_MODE: SigninMode = SigninMode.NORMAL
 _FACILITATOR_LOCK = threading.Lock()
 
-# If facilitator mode is armed but no card is scanned within this many
+# If a non-normal mode is armed but no card is scanned within this many
 # seconds, it auto-reverts to normal mode. Guarded by _FACILITATOR_LOCK.
 _FACILITATOR_TIMEOUT_SECONDS = float(os.getenv("FACILITATOR_TIMEOUT_SECONDS", "45"))
 _facilitator_timeout_timer: Optional[threading.Timer] = None
@@ -170,73 +182,83 @@ def _show_idle_feedback() -> None:
         return
 
     with _FACILITATOR_LOCK:
-        is_facilitator = _NEXT_SIGNIN_IS_FACILITATOR
+        mode = _NEXT_SIGNIN_MODE
 
-    if is_facilitator:
+    if mode == SigninMode.FACILITATOR:
         provide_feedback(FeedbackState.FACILITATOR_SIGNIN)
+    elif mode == SigninMode.SIGN_OUT_ALL:
+        provide_feedback(FeedbackState.SIGN_OUT_ALL_MODE)
     else:
         workshop = sf_get_current_workshop() if sf is not None else "No Event"
         provide_feedback(FeedbackState.READY_TO_SCAN, workshop=workshop)
 
 
 def _facilitator_timeout_expired() -> None:
-    """Timer callback: auto-revert facilitator mode if still armed and unused.
+    """Timer callback: auto-revert to normal mode if still armed and unused.
 
     Runs on the threading.Timer's own thread, so the flag mutation is
     protected by _FACILITATOR_LOCK like every other access.
     """
-    global _NEXT_SIGNIN_IS_FACILITATOR, _facilitator_timeout_timer
+    global _NEXT_SIGNIN_MODE, _facilitator_timeout_timer
 
     with _FACILITATOR_LOCK:
         _facilitator_timeout_timer = None
-        if not _NEXT_SIGNIN_IS_FACILITATOR:
+        if _NEXT_SIGNIN_MODE == SigninMode.NORMAL:
             return
-        _NEXT_SIGNIN_IS_FACILITATOR = False
+        _NEXT_SIGNIN_MODE = SigninMode.NORMAL
 
     LOG.info(
-        "Facilitator mode timed out after %.0fs with no sign-in; reverting to normal mode",
+        "Sign-in mode timed out after %.0fs with no scan; reverting to normal mode",
         _FACILITATOR_TIMEOUT_SECONDS,
     )
     if _HAS_HARDWARE_FEEDBACK:
         _show_idle_feedback()
 
 
-def toggle_next_signin_as_facilitator() -> None:
-    """Toggle facilitator mode for the next created sign-in.
+def cycle_next_signin_mode() -> None:
+    """Cycle the mode for the next card scan: Normal -> Facilitator -> Sign out all -> Normal.
 
-    Called from the gpiozero button-press thread, so the flag mutation is
-    protected by _FACILITATOR_LOCK.  Hardware feedback is triggered outside
+    Called from the gpiozero button-press thread, so the mode mutation is
+    protected by _FACILITATOR_LOCK. Hardware feedback is triggered outside
     the lock to keep the critical section short.
 
-    Arming starts a _FACILITATOR_TIMEOUT_SECONDS timer that auto-disarms the
-    mode if no card is scanned in time.
+    Arming a non-normal mode starts a _FACILITATOR_TIMEOUT_SECONDS timer that
+    auto-reverts to normal mode if no card is scanned in time.
     """
-    global _NEXT_SIGNIN_IS_FACILITATOR, _facilitator_timeout_timer
+    global _NEXT_SIGNIN_MODE, _facilitator_timeout_timer
 
     with _FACILITATOR_LOCK:
-        armed = not _NEXT_SIGNIN_IS_FACILITATOR
-        _NEXT_SIGNIN_IS_FACILITATOR = armed
+        current_index = _SIGNIN_MODE_CYCLE.index(_NEXT_SIGNIN_MODE)
+        new_mode = _SIGNIN_MODE_CYCLE[(current_index + 1) % len(_SIGNIN_MODE_CYCLE)]
+        _NEXT_SIGNIN_MODE = new_mode
 
         if _facilitator_timeout_timer is not None:
             _facilitator_timeout_timer.cancel()
             _facilitator_timeout_timer = None
 
-        if armed:
+        if new_mode != SigninMode.NORMAL:
             _facilitator_timeout_timer = threading.Timer(
                 _FACILITATOR_TIMEOUT_SECONDS, _facilitator_timeout_expired
             )
             _facilitator_timeout_timer.daemon = True
             _facilitator_timeout_timer.start()
 
-    if armed:
+    if new_mode == SigninMode.FACILITATOR:
         LOG.info(
-            "Next sign-in armed as facilitator (toggled); auto-reverts in %.0fs if unused",
+            "Next sign-in armed as facilitator; auto-reverts in %.0fs if unused",
             _FACILITATOR_TIMEOUT_SECONDS,
         )
         if _HAS_HARDWARE_FEEDBACK:
             provide_feedback(FeedbackState.FACILITATOR_SIGNIN)
+    elif new_mode == SigninMode.SIGN_OUT_ALL:
+        LOG.info(
+            "Sign out all mode armed; auto-reverts in %.0fs if unused",
+            _FACILITATOR_TIMEOUT_SECONDS,
+        )
+        if _HAS_HARDWARE_FEEDBACK:
+            provide_feedback(FeedbackState.SIGN_OUT_ALL_MODE)
     else:
-        LOG.info("Facilitator mode disarmed")
+        LOG.info("Sign-in mode reverted to normal")
         if _HAS_HARDWARE_FEEDBACK:
             _show_idle_feedback()
 
@@ -516,6 +538,68 @@ def sf_sign_out_signins_by_id(
     return 200, "all_records_signed_out"
 
 
+def sf_contact_is_facilitator(contact_id: str) -> bool:
+    """Return True if any sign-in record for this contact marks them a facilitator."""
+    if not contact_id:
+        return False
+
+    connected, err = _ensure_connected()
+    if not connected:
+        return False
+
+    esc = _escape_soql(contact_id)
+    query = (
+        f"SELECT Id FROM {SIGNIN_SOBJECT} "
+        f"WHERE {SIGNIN_CONTACT_FIELD} = '{esc}' AND {SIGNIN_FACILITATOR_FIELD} = true "
+        f"LIMIT 1"
+    )
+    try:
+        res = sf.query(query)  # type: ignore[attr-defined]
+    except Exception as exc:
+        LOG.exception("Failed to check facilitator status: %s", exc)
+        return False
+
+    records = res.get("records", []) if isinstance(res, dict) else []
+    return bool(records)
+
+
+def sf_get_all_open_signins() -> Tuple[int, Union[List[Any], str]]:
+    connected, err = _ensure_connected()
+    if not connected:
+        return err
+
+    query = f"SELECT Id FROM {SIGNIN_SOBJECT} WHERE {SIGNIN_SIGNOUT_FIELD} = NULL"
+
+    try:
+        res = sf.query(query)  # type: ignore[attr-defined]
+    except Exception as exc:
+        LOG.exception("Salesforce query failed: %s", exc)
+        return 500, f"salesforce_error: {exc}"
+
+    records = res.get("records", []) if isinstance(res, dict) else []
+    if not records:
+        return 404, "open_signins_not_exists"
+
+    return 200, records
+
+
+def sf_sign_out_all_active_signins(
+    time_to_signout: Union[None, str, datetime.datetime] = None,
+) -> Tuple[int, str]:
+    """Sign out every currently open sign-in, regardless of contact."""
+    open_status, open_signins = sf_get_all_open_signins()
+    if open_status == 404:
+        return 200, "no_active_signins"
+    if open_status != 200:
+        return open_status, str(open_signins)
+
+    ids = [r.get("Id") for r in open_signins if isinstance(r, dict) and r.get("Id")]
+    if not ids:
+        return 200, "no_active_signins"
+
+    return sf_sign_out_signins_by_id(ids, time_to_signout)
+
+
 def sf_get_current_workshop(now: Optional[datetime.datetime] = None) -> str:
     """Determine the workshop name based on current time and workshop schedule.
 
@@ -667,13 +751,13 @@ def process_signin_from_card_serial(
     card_serial: str, now: Optional[datetime.datetime] = None
 ) -> Tuple[int, Any]:
     """Main processing flow for a card serial: sign out open signins or create a new signin."""
-    global _NEXT_SIGNIN_IS_FACILITATOR, _facilitator_timeout_timer
+    global _NEXT_SIGNIN_MODE, _facilitator_timeout_timer
 
-    # Atomically capture and clear facilitator mode so no error path can leave
-    # the flag armed for a future scan by a different person.
+    # Atomically capture and clear the armed mode so no error path can leave
+    # it armed for a future scan by a different person.
     with _FACILITATOR_LOCK:
-        facilitator_mode = _NEXT_SIGNIN_IS_FACILITATOR
-        _NEXT_SIGNIN_IS_FACILITATOR = False
+        mode = _NEXT_SIGNIN_MODE
+        _NEXT_SIGNIN_MODE = SigninMode.NORMAL
         timeout_timer = _facilitator_timeout_timer
         _facilitator_timeout_timer = None
 
@@ -692,6 +776,21 @@ def process_signin_from_card_serial(
     contact_id = card_info.get("contact_id") if isinstance(card_info, dict) else None
     if not contact_id:
         return 400, "card_has_no_contact"
+
+    if mode == SigninMode.SIGN_OUT_ALL:
+        if not sf_contact_is_facilitator(contact_id):
+            LOG.warning(
+                "Sign out all requested but card is not a facilitator's card: %s",
+                contact_id,
+            )
+            return 403, "not_facilitator_card"
+
+        signout_status, signout_msg = sf_sign_out_all_active_signins(now)
+        if signout_status != 200:
+            return signout_status, signout_msg
+        return 200, "all_active_signins_signed_out"
+
+    facilitator_mode = mode == SigninMode.FACILITATOR
 
     open_status, open_signins = sf_get_open_signins_for_contact(contact_id)
     if open_status == 200:
@@ -830,11 +929,21 @@ def feedback(
         print(f"[{method}] Success: Signed In")
         if _HAS_HARDWARE_FEEDBACK:
             provide_feedback(FeedbackState.SIGNED_IN, message)
+    elif status == 200 and payload == "all_active_signins_signed_out":
+        # Success - facilitator-authorized mass sign-out
+        print(f"[{method}] Success: Signed Out All")
+        if _HAS_HARDWARE_FEEDBACK:
+            provide_feedback(FeedbackState.SIGN_OUT_ALL_SUCCESS)
     elif status == 200:
         # Success - sign-out (200 OK)
         print(f"[{method}] Success: Signed Out")
         if _HAS_HARDWARE_FEEDBACK:
             provide_feedback(FeedbackState.SIGNED_OUT, message)
+    elif status == 403:
+        # Sign out all was requested with a non-facilitator card
+        print(f"[{method}] Error {status}: Not authorized for sign out all")
+        if _HAS_HARDWARE_FEEDBACK:
+            provide_feedback(FeedbackState.NOT_AUTHORIZED, message)
     elif status == 404:
         # Card not found - pass the card serial instead of the error message
         print(f"[{method}] Error {status}: Card not registered")
@@ -880,7 +989,7 @@ if __name__ == "__main__":
     connect_to_salesforce()
 
     if _HAS_HARDWARE_FEEDBACK:
-        register_facilitator_button(toggle_next_signin_as_facilitator)
+        register_facilitator_button(cycle_next_signin_mode)
         register_idle_callback(_show_idle_feedback)
 
     # Start network monitor

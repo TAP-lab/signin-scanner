@@ -69,6 +69,9 @@ class FeedbackState(Enum):
     NETWORK_ERROR = "network_error"
     READY_TO_SCAN = "ready_to_scan"
     FACILITATOR_SIGNIN = "facilitator_signin"
+    SIGN_OUT_ALL_MODE = "sign_out_all_mode"
+    SIGN_OUT_ALL_SUCCESS = "sign_out_all_success"
+    NOT_AUTHORIZED = "not_authorized"
     PROCESSING_SCAN = "processing_scan"
     DEBOUNCED = "debounced"
 
@@ -452,6 +455,33 @@ def provide_feedback(
         _set_rgb_color(1, 0.5, 0)
         _display_text(["Facilitator", "sign in", "Scan your card"])
         LOG.info("Feedback: Facilitator Sign In")
+
+    elif state == FeedbackState.SIGN_OUT_ALL_MODE:
+        # Purple LED, no beep, display sign out all mode
+        if _rgb_led is not None:
+            try:
+                _rgb_led.off()
+            except Exception as exc:
+                LOG.warning("Failed to turn off LED: %s", exc)
+        _set_rgb_color(1, 0, 1)
+        _display_text(["Sign out all", "Scan a facilitator", "card to confirm"])
+        LOG.info("Feedback: Sign Out All Mode")
+
+    elif state == FeedbackState.SIGN_OUT_ALL_SUCCESS:
+        # Purple LED, success tone, display confirmation
+        _set_rgb_color(1, 0, 1)
+        _play_beep_pattern([(800, 0.15), (1000, 0.15)])
+        _display_text(["✓ All signed out"])
+        LOG.info("Feedback: Sign Out All Success")
+        _schedule_led_and_oled_clear(8.0)
+
+    elif state == FeedbackState.NOT_AUTHORIZED:
+        # Red LED, error tone, display not authorized
+        _set_rgb_color(1, 0, 0)
+        _play_beep_pattern([(600, 0.3)])
+        _display_text(["✗ Not authorized", "Facilitator card", "required"])
+        LOG.error("Feedback: Not Authorized - %s", message)
+        _schedule_led_and_oled_clear(8.0)
 
     elif state == FeedbackState.PROCESSING_SCAN:
         # Yellow LED (processing), brief beep, display processing
